@@ -583,3 +583,287 @@ class ISDBDecoder:
         
         logger.info(f"OFDM復調完了: {symbol_count}シンボル処理")
         return demodulated_symbols
+    
+    def extract_segment_carriers(self, frequency_domain_signal, segment_id=0):
+        """
+        ISDB-T Mode3の13セグメント構成から特定セグメントのキャリアを抽出
+        
+        Args:
+            frequency_domain_signal: FFT後の周波数領域信号
+            segment_id: セグメント番号（0=ワンセグ, 1-12=ハイビジョン）
+            
+        Returns:
+            List: 指定セグメントのキャリア
+        """
+        if len(frequency_domain_signal) < self.FFT_SIZE:
+            logger.warning(f"FFTサイズ不足: {len(frequency_domain_signal)} < {self.FFT_SIZE}")
+            return frequency_domain_signal
+        
+        # ISDB-T Mode3: 13セグメント構成
+        # 1セグメント = 108キャリア
+        # セグメント配置: 中央にセグメント0（ワンセグ）、両側にセグメント1-12
+        
+        if segment_id == 0:
+            # ワンセグ（セグメント0）: 中央108キャリア
+            start_idx = self.ONESEG_START
+            end_idx = self.ONESEG_END
+            
+            logger.debug(f"ワンセグ抽出: [{start_idx}:{end_idx}] ({self.ONESEG_CARRIERS}キャリア)")
+        else:
+            # ハイビジョン用セグメント（1-12）
+            # セグメント1-6: ワンセグの右側
+            # セグメント7-12: ワンセグの左側
+            carriers_per_segment = 108
+            
+            if 1 <= segment_id <= 6:
+                # 右側セグメント
+                segment_offset = (segment_id - 1) * carriers_per_segment
+                start_idx = self.ONESEG_END + segment_offset
+                end_idx = start_idx + carriers_per_segment
+            elif 7 <= segment_id <= 12:
+                # 左側セグメント
+                segment_offset = (segment_id - 7) * carriers_per_segment
+                end_idx = self.ONESEG_START - segment_offset
+                start_idx = end_idx - carriers_per_segment
+            else:
+                logger.error(f"無効なセグメント番号: {segment_id} (0-12のみ対応)")
+                return []
+            
+            logger.debug(f"セグメント{segment_id}抽出: [{start_idx}:{end_idx}] ({carriers_per_segment}キャリア)")
+        
+        # 範囲チェック
+        if start_idx < 0 or end_idx > len(frequency_domain_signal):
+            logger.warning(f"セグメント範囲エラー: [{start_idx}:{end_idx}] > {len(frequency_domain_signal)}")
+            return []
+        
+        segment_carriers = frequency_domain_signal[start_idx:end_idx]
+        logger.debug(f"セグメント{segment_id}キャリア抽出完了: {len(segment_carriers)}キャリア")
+        
+        return segment_carriers
+    
+    def demodulate_qpsk(self, carriers):
+        """
+        QPSK復調（ワンセグで使用）
+        
+        Args:
+            carriers: 複素キャリア信号
+            
+        Returns:
+            List: 復調ビット列
+        """
+        if len(carriers) == 0:
+            return []
+        
+        bits = []
+        
+        for carrier in carriers:
+            # QPSK: 4つの位相状態（0°, 90°, 180°, 270°）
+            # 各キャリアから2ビットを復調
+            
+            # 位相角度を計算
+            phase = cmath.phase(carrier)
+            
+            # 位相を4象限に分割
+            # 0°-90°: 00, 90°-180°: 01, 180°-270°: 11, 270°-360°: 10
+            if -math.pi/4 <= phase < math.pi/4:
+                # 0°付近: 00
+                bits.extend([0, 0])
+            elif math.pi/4 <= phase < 3*math.pi/4:
+                # 90°付近: 01
+                bits.extend([0, 1])
+            elif 3*math.pi/4 <= phase <= math.pi or -math.pi <= phase < -3*math.pi/4:
+                # 180°付近: 11
+                bits.extend([1, 1])
+            else:
+                # 270°付近: 10
+                bits.extend([1, 0])
+        
+        logger.debug(f"QPSK復調: {len(carriers)}キャリア → {len(bits)}ビット")
+        return bits
+    
+    def demodulate_16qam(self, carriers):
+        """
+        16QAM復調（ハイビジョン用セグメントで使用）
+        
+        Args:
+            carriers: 複素キャリア信号
+            
+        Returns:
+            List: 復調ビット列
+        """
+        if len(carriers) == 0:
+            return []
+        
+        bits = []
+        
+        for carrier in carriers:
+            # 16QAM: 16の振幅・位相状態
+            # 各キャリアから4ビットを復調
+            
+            # 正規化（簡易版）
+            magnitude = abs(carrier)
+            if magnitude > 0:
+                normalized = carrier / magnitude
+            else:
+                normalized = 0+0j
+            
+            # I/Q成分を取得
+            i_val = normalized.real
+            q_val = normalized.imag
+            
+            # 4x4グリッドにマッピング（簡易版）
+            i_bit = 1 if i_val >= 0 else 0
+            q_bit = 1 if q_val >= 0 else 0
+            
+            # 振幅レベル判定（簡易版）
+            amp_i = 1 if abs(i_val) > 0.5 else 0
+            amp_q = 1 if abs(q_val) > 0.5 else 0
+            
+            # 4ビット生成
+            bits.extend([i_bit, amp_i, q_bit, amp_q])
+        
+        logger.debug(f"16QAM復調: {len(carriers)}キャリア → {len(bits)}ビット")
+        return bits
+    
+    def demodulate_64qam(self, carriers):
+        """
+        64QAM復調（ハイビジョン用セグメントで使用）
+        
+        Args:
+            carriers: 複素キャリア信号
+            
+        Returns:
+            List: 復調ビット列
+        """
+        if len(carriers) == 0:
+            return []
+        
+        bits = []
+        
+        for carrier in carriers:
+            # 64QAM: 64の振幅・位相状態
+            # 各キャリアから6ビットを復調
+            
+            # 正規化（簡易版）
+            magnitude = abs(carrier)
+            if magnitude > 0:
+                normalized = carrier / magnitude
+            else:
+                normalized = 0+0j
+            
+            # I/Q成分を取得
+            i_val = normalized.real
+            q_val = normalized.imag
+            
+            # 8x8グリッドにマッピング（簡易版）
+            # 3ビットずつでI/Q成分を表現
+            
+            # I成分3ビット
+            i_bits = []
+            i_level = int((i_val + 1.0) * 4)  # -1.0〜1.0 を 0〜8 にマップ
+            i_level = max(0, min(7, i_level))  # 0-7の範囲にクリップ
+            for j in range(3):
+                i_bits.append((i_level >> (2-j)) & 1)
+            
+            # Q成分3ビット
+            q_bits = []
+            q_level = int((q_val + 1.0) * 4)  # -1.0〜1.0 を 0〜8 にマップ
+            q_level = max(0, min(7, q_level))  # 0-7の範囲にクリップ
+            for j in range(3):
+                q_bits.append((q_level >> (2-j)) & 1)
+            
+            # 6ビット結合
+            bits.extend(i_bits + q_bits)
+        
+        logger.debug(f"64QAM復調: {len(carriers)}キャリア → {len(bits)}ビット")
+        return bits
+    
+    def process_oneseg_symbol(self, ofdm_symbol):
+        """
+        単一OFDMシンボルからワンセグデータを抽出・復調
+        
+        Args:
+            ofdm_symbol: 時間領域OFDMシンボル
+            
+        Returns:
+            dict: ワンセグ復調結果
+        """
+        if len(ofdm_symbol) < self.SYMBOL_SIZE:
+            logger.warning(f"OFDMシンボルサイズ不足: {len(ofdm_symbol)}")
+            return {}
+        
+        # 1. ガードインターバル除去
+        fft_input = self.remove_guard_interval(ofdm_symbol)
+        
+        # 2. FFT実行
+        frequency_domain = self.apply_fft(fft_input)
+        
+        # 3. ワンセグセグメント（セグメント0）抽出
+        oneseg_carriers = self.extract_segment_carriers(frequency_domain, segment_id=0)
+        
+        if not oneseg_carriers:
+            logger.warning("ワンセグキャリア抽出失敗")
+            return {}
+        
+        # 4. QPSK復調（ワンセグはQPSKを使用）
+        demodulated_bits = self.demodulate_qpsk(oneseg_carriers)
+        
+        # 5. 結果をまとめる
+        result = {
+            'segment_id': 0,
+            'modulation': 'QPSK',
+            'carriers': oneseg_carriers,
+            'carrier_count': len(oneseg_carriers),
+            'demodulated_bits': demodulated_bits,
+            'bit_count': len(demodulated_bits),
+            'symbol_power': sum(abs(c)**2 for c in oneseg_carriers) / len(oneseg_carriers) if oneseg_carriers else 0
+        }
+        
+        logger.debug(f"ワンセグ復調完了: {result['carrier_count']}キャリア → {result['bit_count']}ビット")
+        return result
+    
+    def process_isdb_mode3_stream(self, samples):
+        """
+        ISDB-T Mode3ストリーム処理（13セグメント対応）
+        
+        Args:
+            samples: 連続I/Qサンプル
+            
+        Returns:
+            List: ワンセグ復調結果のリスト
+        """
+        if len(samples) < self.SYMBOL_SIZE:
+            logger.warning("ISDB-T Mode3処理: サンプル数不足")
+            return []
+        
+        oneseg_results = []
+        current_pos = 0
+        
+        # シンボル同期
+        sync_offset, sync_confidence = self.symbol_synchronization(samples[current_pos:])
+        
+        if sync_confidence < 0.3:  # 同期信頼度しきい値を緩和
+            logger.warning(f"ISDB-T Mode3同期失敗: 信頼度={sync_confidence:.3f}")
+            return []
+        
+        current_pos += sync_offset
+        logger.info(f"ISDB-T Mode3同期成功: オフセット={sync_offset}, 信頼度={sync_confidence:.3f}")
+        
+        # 連続するシンボルを処理
+        symbol_count = 0
+        while current_pos + self.SYMBOL_SIZE <= len(samples):
+            # 現在のシンボルを抽出
+            current_symbol = samples[current_pos:current_pos + self.SYMBOL_SIZE]
+            
+            # ワンセグ復調実行
+            oneseg_result = self.process_oneseg_symbol(current_symbol)
+            
+            if oneseg_result:
+                oneseg_results.append(oneseg_result)
+                symbol_count += 1
+            
+            # 次のシンボルに進む
+            current_pos += self.SYMBOL_SIZE
+        
+        logger.info(f"ISDB-T Mode3処理完了: {symbol_count}シンボル処理, {len(oneseg_results)}個の有効なワンセグデータ")
+        return oneseg_results

@@ -361,31 +361,34 @@ def main():
                         dc_component_out = sum(processed_samples) / len(processed_samples)
                         logger.info(f"前処理後信号: 平均パワー={avg_power_out:.6f}, DC={abs(dc_component_out):.6f}")
                     
-                    # 2. OFDM復調テスト
+                    # 2. ISDB-T Mode3復調テスト
                     if len(processed_samples) >= isdb_decoder.SYMBOL_SIZE:
-                        logger.info("OFDM復調テスト実行中...")
+                        logger.info("ISDB-T Mode3復調テスト実行中...")
                         
                         try:
-                            # OFDM復調実行
-                            ofdm_symbols = isdb_decoder.process_ofdm_stream(processed_samples)
+                            # Mode3復調実行（ワンセグ抽出）
+                            oneseg_results = isdb_decoder.process_isdb_mode3_stream(processed_samples)
                             
-                            if ofdm_symbols:
-                                logger.info(f"OFDM復調成功: {len(ofdm_symbols)}シンボル復調")
+                            if oneseg_results:
+                                logger.info(f"ISDB-T Mode3復調成功: {len(oneseg_results)}シンボル復調")
                                 
                                 # 復調結果統計
-                                for i, symbol in enumerate(ofdm_symbols):
-                                    if len(symbol) > 0:
-                                        symbol_power = sum(abs(c)**2 for c in symbol) / len(symbol)
-                                        logger.info(f"シンボル{i}: {len(symbol)}キャリア, パワー={symbol_power:.6f}")
+                                total_bits = 0
+                                for i, result in enumerate(oneseg_results):
+                                    logger.info(f"シンボル{i}: セグメント{result['segment_id']} ({result['modulation']})")
+                                    logger.info(f"  キャリア数: {result['carrier_count']}, ビット数: {result['bit_count']}")
+                                    logger.info(f"  シンボルパワー: {result['symbol_power']:.6f}")
+                                    total_bits += result['bit_count']
                                 
-                                logger.info("✓ OFDM復調テスト完了")
+                                logger.info(f"✓ 合計復調ビット数: {total_bits}")
+                                logger.info("✓ ISDB-T Mode3復調テスト完了")
                             else:
-                                logger.warning("OFDM復調失敗: シンボル同期エラーまたはサンプル不足")
+                                logger.warning("ISDB-T Mode3復調失敗: シンボル同期エラーまたはサンプル不足")
                                 
                         except Exception as e:
-                            logger.error(f"OFDM復調エラー: {e}")
+                            logger.error(f"ISDB-T Mode3復調エラー: {e}")
                     else:
-                        logger.warning(f"OFDM復調スキップ: サンプル不足 ({len(processed_samples)} < {isdb_decoder.SYMBOL_SIZE})")
+                        logger.warning(f"ISDB-T Mode3復調スキップ: サンプル不足 ({len(processed_samples)} < {isdb_decoder.SYMBOL_SIZE})")
                     
                     # 最終統計
                     final_stats = isdb_decoder.get_signal_stats()
@@ -393,14 +396,14 @@ def main():
                 else:
                     logger.error("サンプル読み取り失敗")
             
-            # 現在はダミーTS出力（ISDB-T Mode3・TS生成未実装）
-            logger.warning("注意: ISDB-T Mode3対応・TS生成は未実装のため、ダミーTS出力を行います")
+            # 現在はダミーTS出力（エラー訂正・TS生成未実装）
+            logger.warning("注意: エラー訂正・TS生成は未実装のため、ダミーTS出力を行います")
             
             for _ in range(10):
                 sys.stdout.buffer.write(dummy_ts_packet)
                 sys.stdout.buffer.flush()
             
-            logger.info("信号処理・OFDM復調テスト完了")
+            logger.info("信号処理・ISDB-T Mode3復調テスト完了")
         
     except KeyboardInterrupt:
         logger.info("ユーザーによって中断されました")
