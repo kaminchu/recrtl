@@ -42,22 +42,51 @@ def show_channel_list(area: str = 'tokyo'):
         ch_mgr = ChannelManager()
         channels = ch_mgr.list_channels(area)
         
-        print(f"\n{area.upper()}地域 チャンネル一覧:", file=sys.stderr)
-        print("-" * 60, file=sys.stderr)
+        # 都道府県名または地域名を取得
+        area_name = area.upper()
+        if area in ch_mgr.get_all_prefectures():
+            pref_info = ch_mgr._broadcast_db.get_prefecture_info(area)
+            if pref_info:
+                area_name = pref_info['name']
         
-        for channel, info in channels[:10]:  # 最初の10チャンネルのみ表示
+        print(f"\n{area_name} チャンネル一覧:", file=sys.stderr)
+        print("-" * 70, file=sys.stderr)
+        
+        if not channels:
+            # 無効な地域コードかチェック
+            all_prefectures = ch_mgr.get_all_prefectures()
+            
+            if area not in all_prefectures:
+                print(f"  エラー: 無効な都道府県コード '{area}' です", file=sys.stderr)
+                print("  利用可能な都道府県コードを確認するには --list-regions を使用してください", file=sys.stderr)
+            else:
+                print("  該当する放送局はありません", file=sys.stderr)
+            print("-" * 70, file=sys.stderr)
+            return
+        
+        for channel, info in channels:
             freq_str = f"{info['frequency_mhz']:.6f} MHz"
             if 'station' in info:
                 station = info['station']
-                region_info = f" ({station['region']})" if 'region' in station else ""
-                print(f"  ch{channel:2d}: {freq_str} - {station['name']}{region_info}", file=sys.stderr)
+                
+                # 送信所情報を表示
+                transmitter_info = ""
+                if 'transmitter' in info:
+                    transmitter_info = f" [{info['transmitter']['name']}]"
+                
+                # 地域情報を表示
+                region_info = ""
+                if 'prefecture' in station and 'region' in station:
+                    region_info = f" ({station['region']})"
+                elif 'region' in station:
+                    region_info = f" ({station['region']})"
+                
+                print(f"  ch{channel:2d}: {freq_str} - {station['name']}{transmitter_info}{region_info}", file=sys.stderr)
             else:
                 print(f"  ch{channel:2d}: {freq_str}", file=sys.stderr)
         
-        if len(channels) > 10:
-            print(f"  ... その他{len(channels)-10}チャンネル", file=sys.stderr)
-        
-        print("-" * 60, file=sys.stderr)
+        print("-" * 70, file=sys.stderr)
+        print(f"  合計: {len(channels)}局", file=sys.stderr)
         
     except Exception as e:
         print(f"チャンネル一覧表示エラー: {e}", file=sys.stderr)
@@ -70,22 +99,36 @@ def show_region_list():
         ch_mgr = ChannelManager()
         
         print("\n利用可能な地域一覧:", file=sys.stderr)
-        print("-" * 50, file=sys.stderr)
+        print("-" * 60, file=sys.stderr)
         
-        # 地域ブロック情報を表示
-        if hasattr(ch_mgr, '_regions'):
-            for region_name, areas in ch_mgr._regions.items():
-                print(f"【{region_name}】", file=sys.stderr)
-                for area in areas:
-                    area_channels = ch_mgr.list_channels(area)
-                    print(f"  {area}: {len(area_channels)}局", file=sys.stderr)
-                print("", file=sys.stderr)
+        # 47都道府県の一覧を表示
+        all_prefectures = ch_mgr.get_all_prefectures()
         
+        print("【47都道府県対応】", file=sys.stderr)
+        current_region = None
+        for pref_code in all_prefectures:
+            pref_info = ch_mgr._broadcast_db.get_prefecture_info(pref_code)
+            if pref_info:
+                # 地域が変わったら表示
+                if current_region != pref_info['region']:
+                    current_region = pref_info['region']
+                    print(f"\n◆ {current_region}", file=sys.stderr)
+                
+                # 放送局数を取得
+                pref_channels = ch_mgr.list_channels(pref_code)
+                transmitters = ch_mgr.get_transmitters_by_prefecture(pref_code)
+                transmitter_count = len(transmitters) if transmitters else 0
+                
+                print(f"  {pref_code}: {pref_info['name']} ({len(pref_channels)}局, {transmitter_count}送信所)", file=sys.stderr)
+        
+        
+        print("-" * 60, file=sys.stderr)
         print("使用例:", file=sys.stderr)
-        print("  --list-channels tokyo    # 東京の放送局一覧", file=sys.stderr)
-        print("  --list-channels osaka    # 大阪の放送局一覧", file=sys.stderr)
-        print("  --list-channels hokkaido # 北海道の放送局一覧", file=sys.stderr)
-        print("-" * 50, file=sys.stderr)
+        print("  --list-channels tokyo     # 東京都の放送局一覧", file=sys.stderr)
+        print("  --list-channels hokkaido  # 北海道の放送局一覧", file=sys.stderr)
+        print("  --list-channels aichi     # 愛知県の放送局一覧", file=sys.stderr)
+        print("  --list-channels okinawa   # 沖縄県の放送局一覧", file=sys.stderr)
+        print("-" * 60, file=sys.stderr)
         
     except Exception as e:
         print(f"地域一覧表示エラー: {e}", file=sys.stderr)
@@ -167,8 +210,7 @@ def main():
     )
     parser.add_argument(
         '--list-channels',
-        choices=['tokyo', 'osaka', 'nagoya', 'hokkaido', 'aomori', 'hiroshima', 'fukuoka', 'okinawa'],
-        help='指定地域のチャンネル一覧を表示'
+        help='指定地域のチャンネル一覧を表示（47都道府県コードまたは従来の地域コード）'
     )
     parser.add_argument(
         '--list-regions',

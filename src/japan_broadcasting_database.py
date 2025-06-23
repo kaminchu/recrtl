@@ -1,0 +1,848 @@
+"""
+日本全国地上デジタル放送データベース
+
+47都道府県すべての地上デジタル放送局情報と物理チャンネル情報を管理する。
+送信所・中継局別の詳細な情報を含む。
+"""
+
+import logging
+from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+class JapanBroadcastingDatabase:
+    """日本全国の地上デジタル放送データベース"""
+    
+    def __init__(self):
+        """データベースを初期化"""
+        self._prefectures = {}
+        self._build_database()
+        logger.debug("日本全国放送データベース初期化完了")
+    
+    def _build_database(self):
+        """47都道府県の放送局データベースを構築"""
+        
+        # 北海道・東北地方
+        self._prefectures.update({
+            'hokkaido': {
+                'name': '北海道',
+                'region': '北海道・東北',
+                'transmitters': {
+                    'sapporo': {
+                        'name': '札幌',
+                        'stations': {
+                            15: {'name': 'NHK総合・札幌', 'call_sign': 'JOIK-DTV'},
+                            13: {'name': 'NHK Eテレ札幌', 'call_sign': 'JOIB-DTV'},
+                            17: {'name': '北海道放送', 'call_sign': 'JOIR-DTV'},
+                            19: {'name': '札幌テレビ', 'call_sign': 'JOSI-DTV'},
+                            21: {'name': '北海道テレビ', 'call_sign': 'JOHH-DTV'},
+                            27: {'name': '北海道文化放送', 'call_sign': 'JOEM-DTV'},
+                            25: {'name': 'テレビ北海道', 'call_sign': 'JOTI-DTV'},
+                        }
+                    },
+                    'asahikawa': {
+                        'name': '旭川',
+                        'stations': {
+                            15: {'name': 'NHK総合・旭川', 'call_sign': 'JOIK-DTV'},
+                            13: {'name': 'NHK Eテレ旭川', 'call_sign': 'JOIB-DTV'},
+                            17: {'name': '北海道放送旭川', 'call_sign': 'JOIR-DTV'},
+                            19: {'name': '札幌テレビ旭川', 'call_sign': 'JOSI-DTV'},
+                            21: {'name': '北海道テレビ旭川', 'call_sign': 'JOHH-DTV'},
+                            27: {'name': '北海道文化放送旭川', 'call_sign': 'JOEM-DTV'},
+                        }
+                    },
+                    'hakodate': {
+                        'name': '函館',
+                        'stations': {
+                            18: {'name': 'NHK総合・函館', 'call_sign': 'JOVK-DTV'},
+                            13: {'name': 'NHK Eテレ函館', 'call_sign': 'JOVB-DTV'},
+                            17: {'name': '北海道放送函館', 'call_sign': 'JOIR-DTV'},
+                            19: {'name': '札幌テレビ函館', 'call_sign': 'JOSI-DTV'},
+                            21: {'name': '北海道テレビ函館', 'call_sign': 'JOHH-DTV'},
+                            27: {'name': '北海道文化放送函館', 'call_sign': 'JOEM-DTV'},
+                        }
+                    }
+                }
+            },
+            'aomori': {
+                'name': '青森県',
+                'region': '北海道・東北',
+                'transmitters': {
+                    'aomori': {
+                        'name': '青森',
+                        'stations': {
+                            16: {'name': 'NHK総合・青森', 'call_sign': 'JOAI-DTV'},
+                            13: {'name': 'NHK Eテレ青森', 'call_sign': 'JOAB-DTV'},
+                            31: {'name': '青森放送', 'call_sign': 'JORY-DTV'},
+                            33: {'name': '青森テレビ', 'call_sign': 'JOYI-DTV'},
+                            35: {'name': '青森朝日放送', 'call_sign': 'JOAH-DTV'},
+                        }
+                    },
+                    'hachinohe': {
+                        'name': '八戸',
+                        'stations': {
+                            20: {'name': 'NHK総合・八戸', 'call_sign': 'JOAI-DTV'},
+                            13: {'name': 'NHK Eテレ八戸', 'call_sign': 'JOAB-DTV'},
+                            31: {'name': '青森放送八戸', 'call_sign': 'JORY-DTV'},
+                            33: {'name': '青森テレビ八戸', 'call_sign': 'JOYI-DTV'},
+                            35: {'name': '青森朝日放送八戸', 'call_sign': 'JOAH-DTV'},
+                        }
+                    }
+                }
+            },
+            'iwate': {
+                'name': '岩手県',
+                'region': '北海道・東北',
+                'transmitters': {
+                    'morioka': {
+                        'name': '盛岡',
+                        'stations': {
+                            14: {'name': 'NHK総合・盛岡', 'call_sign': 'JOIK-DTV'},
+                            13: {'name': 'NHK Eテレ盛岡', 'call_sign': 'JOIB-DTV'},
+                            16: {'name': 'IBC岩手放送', 'call_sign': 'JOIR-DTV'},
+                            20: {'name': 'テレビ岩手', 'call_sign': 'JOJI-DTV'},
+                            18: {'name': '岩手めんこいテレビ', 'call_sign': 'JOMI-DTV'},
+                            33: {'name': '岩手朝日テレビ', 'call_sign': 'JOIY-DTV'},
+                        }
+                    }
+                }
+            },
+            'miyagi': {
+                'name': '宮城県', 
+                'region': '北海道・東北',
+                'transmitters': {
+                    'sendai': {
+                        'name': '仙台',
+                        'stations': {
+                            17: {'name': 'NHK総合・仙台', 'call_sign': 'JOAK-DTV'},
+                            13: {'name': 'NHK Eテレ仙台', 'call_sign': 'JOAB-DTV'},
+                            16: {'name': '東北放送', 'call_sign': 'JOIR-DTV'},
+                            19: {'name': '仙台放送', 'call_sign': 'JOFX-DTV'},
+                            21: {'name': 'ミヤギテレビ', 'call_sign': 'JOMM-DTV'},
+                            23: {'name': '東日本放送', 'call_sign': 'JOEM-DTV'},
+                        }
+                    }
+                }
+            },
+            'akita': {
+                'name': '秋田県',
+                'region': '北海道・東北', 
+                'transmitters': {
+                    'akita': {
+                        'name': '秋田',
+                        'stations': {
+                            15: {'name': 'NHK総合・秋田', 'call_sign': 'JOUK-DTV'},
+                            13: {'name': 'NHK Eテレ秋田', 'call_sign': 'JOUB-DTV'},
+                            17: {'name': '秋田放送', 'call_sign': 'JORY-DTV'},
+                            19: {'name': 'AKT秋田テレビ', 'call_sign': 'JORY-DTV'},
+                            21: {'name': '秋田朝日放送', 'call_sign': 'JOAY-DTV'},
+                        }
+                    }
+                }
+            },
+            'yamagata': {
+                'name': '山形県',
+                'region': '北海道・東北',
+                'transmitters': {
+                    'yamagata': {
+                        'name': '山形',
+                        'stations': {
+                            16: {'name': 'NHK総合・山形', 'call_sign': 'JOJK-DTV'},
+                            13: {'name': 'NHK Eテレ山形', 'call_sign': 'JOJB-DTV'},
+                            18: {'name': '山形放送', 'call_sign': 'JORY-DTV'},
+                            20: {'name': 'テレビユー山形', 'call_sign': 'JOGI-DTV'},
+                            22: {'name': 'さくらんぼテレビ', 'call_sign': 'JORY-DTV'},
+                            24: {'name': '山形テレビ', 'call_sign': 'JOYI-DTV'},
+                        }
+                    }
+                }
+            },
+            'fukushima': {
+                'name': '福島県',
+                'region': '北海道・東北',
+                'transmitters': {
+                    'fukushima': {
+                        'name': '福島',
+                        'stations': {
+                            15: {'name': 'NHK総合・福島', 'call_sign': 'JOFK-DTV'},
+                            13: {'name': 'NHK Eテレ福島', 'call_sign': 'JOFB-DTV'},
+                            17: {'name': '福島中央テレビ', 'call_sign': 'JOVI-DTV'},
+                            19: {'name': 'テレビユー福島', 'call_sign': 'JOGI-DTV'},
+                            21: {'name': '福島テレビ', 'call_sign': 'JOCX-DTV'},
+                            23: {'name': '福島放送', 'call_sign': 'JOAY-DTV'},
+                        }
+                    }
+                }
+            }
+        })
+        
+        # 関東地方
+        self._prefectures.update({
+            'tokyo': {
+                'name': '東京都',
+                'region': '関東',
+                'transmitters': {
+                    'tokyo_skytree': {
+                        'name': '東京スカイツリー',
+                        'stations': {
+                            27: {'name': 'NHK総合・東京', 'call_sign': 'JOAK-DTV'},
+                            26: {'name': 'NHK Eテレ東京', 'call_sign': 'JOAB-DTV'},
+                            25: {'name': '日本テレビ', 'call_sign': 'JOAX-DTV'},
+                            22: {'name': 'TBSテレビ', 'call_sign': 'JORX-DTV'},
+                            21: {'name': 'フジテレビ', 'call_sign': 'JOCX-DTV'},
+                            24: {'name': 'テレビ朝日', 'call_sign': 'JOEX-DTV'},
+                            23: {'name': 'テレビ東京', 'call_sign': 'JOTX-DTV'},
+                            16: {'name': '東京MX', 'call_sign': 'JOMX-DTV'},
+                            18: {'name': '放送大学', 'call_sign': 'JOUD-DTV'},
+                        }
+                    }
+                }
+            },
+            'kanagawa': {
+                'name': '神奈川県',
+                'region': '関東',
+                'transmitters': {
+                    'yokohama_minato_mirai': {
+                        'name': '横浜みなとみらい',
+                        'stations': {
+                            42: {'name': 'tvk（テレビ神奈川）', 'call_sign': 'JOKM-DTV'},
+                        }
+                    }
+                }
+            },
+            'saitama': {
+                'name': '埼玉県',
+                'region': '関東',
+                'transmitters': {
+                    'urawa': {
+                        'name': '浦和',
+                        'stations': {
+                            38: {'name': 'テレ玉', 'call_sign': 'JOUS-DTV'},
+                        }
+                    }
+                }
+            },
+            'chiba': {
+                'name': '千葉県',
+                'region': '関東',
+                'transmitters': {
+                    'choshi': {
+                        'name': '銚子',
+                        'stations': {
+                            30: {'name': 'チバテレビ', 'call_sign': 'JOCL-DTV'},
+                        }
+                    }
+                }
+            },
+            'ibaraki': {
+                'name': '茨城県',
+                'region': '関東',
+                'transmitters': {
+                    'mito': {
+                        'name': '水戸',
+                        'stations': {
+                            20: {'name': 'NHK総合・水戸', 'call_sign': 'JOOK-DTV'},
+                            13: {'name': 'NHK Eテレ水戸', 'call_sign': 'JOOB-DTV'},
+                        }
+                    }
+                }
+            },
+            'tochigi': {
+                'name': '栃木県',
+                'region': '関東',
+                'transmitters': {
+                    'utsunomiya': {
+                        'name': '宇都宮',
+                        'stations': {
+                            47: {'name': 'NHK総合・宇都宮', 'call_sign': 'JOOG-DTV'},
+                            13: {'name': 'NHK Eテレ宇都宮', 'call_sign': 'JOOB-DTV'},
+                            29: {'name': 'とちぎテレビ', 'call_sign': 'JOGY-DTV'},
+                        }
+                    }
+                }
+            },
+            'gunma': {
+                'name': '群馬県',
+                'region': '関東',
+                'transmitters': {
+                    'maebashi': {
+                        'name': '前橋',
+                        'stations': {
+                            37: {'name': 'NHK総合・前橋', 'call_sign': 'JOOK-DTV'},
+                            13: {'name': 'NHK Eテレ前橋', 'call_sign': 'JOOB-DTV'},
+                            48: {'name': '群馬テレビ', 'call_sign': 'JOTY-DTV'},
+                        }
+                    }
+                }
+            }
+        })
+        
+        # 中部地方
+        self._prefectures.update({
+            'aichi': {
+                'name': '愛知県',
+                'region': '中部',
+                'transmitters': {
+                    'nagoya': {
+                        'name': '名古屋',
+                        'stations': {
+                            20: {'name': 'NHK総合・名古屋', 'call_sign': 'JOCK-DTV'},
+                            13: {'name': 'NHK Eテレ名古屋', 'call_sign': 'JOCB-DTV'},
+                            21: {'name': '中京テレビ', 'call_sign': 'JOCH-DTV'},
+                            25: {'name': 'CBCテレビ', 'call_sign': 'JOGX-DTV'},
+                            26: {'name': 'メ〜テレ', 'call_sign': 'JOCI-DTV'},
+                            27: {'name': 'テレビ愛知', 'call_sign': 'JOCI-DTV'},
+                        }
+                    }
+                }
+            },
+            'shizuoka': {
+                'name': '静岡県',
+                'region': '中部',
+                'transmitters': {
+                    'shizuoka': {
+                        'name': '静岡',
+                        'stations': {
+                            19: {'name': 'NHK総合・静岡', 'call_sign': 'JOPK-DTV'},
+                            13: {'name': 'NHK Eテレ静岡', 'call_sign': 'JOPB-DTV'},
+                            21: {'name': '静岡放送', 'call_sign': 'JORY-DTV'},
+                            23: {'name': 'テレビ静岡', 'call_sign': 'JOCX-DTV'},
+                            25: {'name': '静岡朝日テレビ', 'call_sign': 'JOAY-DTV'},
+                            27: {'name': '静岡第一テレビ', 'call_sign': 'JORY-DTV'},
+                        }
+                    }
+                }
+            },
+            'gifu': {
+                'name': '岐阜県',
+                'region': '中部',
+                'transmitters': {
+                    'gifu': {
+                        'name': '岐阜',
+                        'stations': {
+                            17: {'name': 'NHK総合・岐阜', 'call_sign': 'JOCK-DTV'},
+                            13: {'name': 'NHK Eテレ岐阜', 'call_sign': 'JOCB-DTV'},
+                            33: {'name': '岐阜放送', 'call_sign': 'JOGY-DTV'},
+                        }
+                    }
+                }
+            },
+            'mie': {
+                'name': '三重県',
+                'region': '中部',
+                'transmitters': {
+                    'tsu': {
+                        'name': '津',
+                        'stations': {
+                            33: {'name': 'NHK総合・津', 'call_sign': 'JOPK-DTV'},
+                            13: {'name': 'NHK Eテレ津', 'call_sign': 'JOPB-DTV'},
+                            31: {'name': '三重テレビ', 'call_sign': 'JOTY-DTV'},
+                        }
+                    }
+                }
+            },
+            'niigata': {
+                'name': '新潟県',
+                'region': '中部',
+                'transmitters': {
+                    'niigata': {
+                        'name': '新潟',
+                        'stations': {
+                            17: {'name': 'NHK総合・新潟', 'call_sign': 'JOUK-DTV'},
+                            13: {'name': 'NHK Eテレ新潟', 'call_sign': 'JOUB-DTV'},
+                            21: {'name': 'BSN新潟放送', 'call_sign': 'JORY-DTV'},
+                            23: {'name': 'NST新潟総合テレビ', 'call_sign': 'JOCX-DTV'},
+                            25: {'name': 'TeNY新潟一番テレビ', 'call_sign': 'JOPI-DTV'},
+                            29: {'name': 'UX新潟テレビ21', 'call_sign': 'JOAX-DTV'},
+                        }
+                    }
+                }
+            },
+            'toyama': {
+                'name': '富山県',
+                'region': '中部',
+                'transmitters': {
+                    'toyama': {
+                        'name': '富山',
+                        'stations': {
+                            15: {'name': 'NHK総合・富山', 'call_sign': 'JOAK-DTV'},
+                            13: {'name': 'NHK Eテレ富山', 'call_sign': 'JOAB-DTV'},
+                            17: {'name': 'KNB北日本放送', 'call_sign': 'JORY-DTV'},
+                            19: {'name': 'BBT富山テレビ', 'call_sign': 'JOCX-DTV'},
+                            21: {'name': 'チューリップテレビ', 'call_sign': 'JOTI-DTV'},
+                        }
+                    }
+                }
+            },
+            'ishikawa': {
+                'name': '石川県',
+                'region': '中部',
+                'transmitters': {
+                    'kanazawa': {
+                        'name': '金沢',
+                        'stations': {
+                            16: {'name': 'NHK総合・金沢', 'call_sign': 'JOJK-DTV'},
+                            13: {'name': 'NHK Eテレ金沢', 'call_sign': 'JOJB-DTV'},
+                            17: {'name': 'MRO北陸放送', 'call_sign': 'JORY-DTV'},
+                            18: {'name': 'HAB北陸朝日放送', 'call_sign': 'JOAY-DTV'},
+                            20: {'name': 'テレビ金沢', 'call_sign': 'JOTI-DTV'},
+                            25: {'name': 'ITC石川テレビ', 'call_sign': 'JOCX-DTV'},
+                        }
+                    }
+                }
+            },
+            'fukui': {
+                'name': '福井県',
+                'region': '中部',
+                'transmitters': {
+                    'fukui': {
+                        'name': '福井',
+                        'stations': {
+                            15: {'name': 'NHK総合・福井', 'call_sign': 'JOFG-DTV'},
+                            13: {'name': 'NHK Eテレ福井', 'call_sign': 'JOFB-DTV'},
+                            17: {'name': 'FBC福井放送', 'call_sign': 'JORY-DTV'},
+                            19: {'name': 'FTB福井テレビ', 'call_sign': 'JOCX-DTV'},
+                        }
+                    }
+                }
+            },
+            'nagano': {
+                'name': '長野県',
+                'region': '中部',
+                'transmitters': {
+                    'matsumoto': {
+                        'name': '松本',
+                        'stations': {
+                            18: {'name': 'NHK総合・松本', 'call_sign': 'JONK-DTV'},
+                            13: {'name': 'NHK Eテレ松本', 'call_sign': 'JONB-DTV'},
+                            20: {'name': 'SBC信越放送', 'call_sign': 'JORY-DTV'},
+                            22: {'name': 'NBS長野放送', 'call_sign': 'JOCX-DTV'},
+                            24: {'name': 'TSB長野テレビ', 'call_sign': 'JOCX-DTV'},
+                            30: {'name': 'abn長野朝日放送', 'call_sign': 'JOAY-DTV'},
+                        }
+                    }
+                }
+            },
+            'yamanashi': {
+                'name': '山梨県',
+                'region': '中部',
+                'transmitters': {
+                    'kofu': {
+                        'name': '甲府',
+                        'stations': {
+                            19: {'name': 'NHK総合・甲府', 'call_sign': 'JOKG-DTV'},
+                            13: {'name': 'NHK Eテレ甲府', 'call_sign': 'JOKB-DTV'},
+                            21: {'name': 'YBS山梨放送', 'call_sign': 'JORY-DTV'},
+                            23: {'name': 'UTY山梨テレビ', 'call_sign': 'JOCX-DTV'},
+                        }
+                    }
+                }
+            }
+        })
+        
+        # 近畿地方
+        self._prefectures.update({
+            'osaka': {
+                'name': '大阪府',
+                'region': '近畿',
+                'transmitters': {
+                    'ikoma': {
+                        'name': '生駒山',
+                        'stations': {
+                            24: {'name': 'NHK総合・大阪', 'call_sign': 'JOOK-DTV'},
+                            13: {'name': 'NHK Eテレ大阪', 'call_sign': 'JOOB-DTV'},
+                            25: {'name': '毎日放送', 'call_sign': 'JOOR-DTV'},
+                            22: {'name': '関西テレビ', 'call_sign': 'JODX-DTV'},
+                            26: {'name': '朝日放送テレビ', 'call_sign': 'JOAY-DTV'},
+                            15: {'name': 'テレビ大阪', 'call_sign': 'JOTV-DTV'},
+                        }
+                    }
+                }
+            },
+            'kyoto': {
+                'name': '京都府',
+                'region': '近畿',
+                'transmitters': {
+                    'kyoto': {
+                        'name': '京都',
+                        'stations': {
+                            14: {'name': 'KBS京都', 'call_sign': 'JOKR-DTV'},
+                        }
+                    }
+                }
+            },
+            'hyogo': {
+                'name': '兵庫県',
+                'region': '近畿',
+                'transmitters': {
+                    'kobe': {
+                        'name': '神戸',
+                        'stations': {
+                            30: {'name': 'サンテレビ', 'call_sign': 'JOTV-DTV'},
+                        }
+                    }
+                }
+            },
+            'nara': {
+                'name': '奈良県',
+                'region': '近畿',
+                'transmitters': {
+                    'nara': {
+                        'name': '奈良',
+                        'stations': {
+                            29: {'name': '奈良テレビ', 'call_sign': 'JORY-DTV'},
+                        }
+                    }
+                }
+            },
+            'wakayama': {
+                'name': '和歌山県',
+                'region': '近畿',
+                'transmitters': {
+                    'wakayama': {
+                        'name': '和歌山',
+                        'stations': {
+                            18: {'name': 'テレビ和歌山', 'call_sign': 'JORY-DTV'},
+                        }
+                    }
+                }
+            },
+            'shiga': {
+                'name': '滋賀県',
+                'region': '近畿',
+                'transmitters': {
+                    'hikone': {
+                        'name': '彦根',
+                        'stations': {
+                            28: {'name': 'びわ湖放送', 'call_sign': 'JORY-DTV'},
+                        }
+                    }
+                }
+            }
+        })
+        
+        # 中国・四国地方
+        self._prefectures.update({
+            'hiroshima': {
+                'name': '広島県',
+                'region': '中国・四国',
+                'transmitters': {
+                    'hiroshima': {
+                        'name': '広島',
+                        'stations': {
+                            19: {'name': 'NHK総合・広島', 'call_sign': 'JOFK-DTV'},
+                            13: {'name': 'NHK Eテレ広島', 'call_sign': 'JOFB-DTV'},
+                            25: {'name': '中国放送', 'call_sign': 'JOER-DTV'},
+                            31: {'name': '広島テレビ', 'call_sign': 'JOGH-DTV'},
+                            35: {'name': '広島ホームテレビ', 'call_sign': 'JOGM-DTV'},
+                            33: {'name': 'テレビ新広島', 'call_sign': 'JOGI-DTV'},
+                        }
+                    }
+                }
+            },
+            'okayama': {
+                'name': '岡山県',
+                'region': '中国・四国',
+                'transmitters': {
+                    'kanayama': {
+                        'name': '金山',
+                        'stations': {
+                            15: {'name': 'NHK総合・岡山', 'call_sign': 'JOKK-DTV'},
+                            13: {'name': 'NHK Eテレ岡山', 'call_sign': 'JOKB-DTV'},
+                            17: {'name': 'RSK山陽放送', 'call_sign': 'JORY-DTV'},
+                            19: {'name': 'OHKテレビ', 'call_sign': 'JORY-DTV'},
+                            21: {'name': 'テレビせとうち', 'call_sign': 'JORY-DTV'},
+                            23: {'name': '瀬戸内海放送', 'call_sign': 'JOAY-DTV'},
+                        }
+                    }
+                }
+            },
+            'yamaguchi': {
+                'name': '山口県',
+                'region': '中国・四国',
+                'transmitters': {
+                    'yamaguchi': {
+                        'name': '山口',
+                        'stations': {
+                            19: {'name': 'NHK総合・山口', 'call_sign': 'JOUF-DTV'},
+                            13: {'name': 'NHK Eテレ山口', 'call_sign': 'JOUB-DTV'},
+                            23: {'name': 'KRY山口放送', 'call_sign': 'JORY-DTV'},
+                            25: {'name': 'TYSテレビ山口', 'call_sign': 'JOCX-DTV'},
+                            27: {'name': 'YAB山口朝日放送', 'call_sign': 'JOAY-DTV'},
+                        }
+                    }
+                }
+            },
+            'shimane': {
+                'name': '島根県',
+                'region': '中国・四国',
+                'transmitters': {
+                    'matsue': {
+                        'name': '松江',
+                        'stations': {
+                            21: {'name': 'NHK総合・松江', 'call_sign': 'JOAK-DTV'},
+                            13: {'name': 'NHK Eテレ松江', 'call_sign': 'JOAB-DTV'},
+                            24: {'name': 'BSS山陰放送', 'call_sign': 'JORY-DTV'},
+                            28: {'name': 'TSK山陰中央テレビ', 'call_sign': 'JOCX-DTV'},
+                        }
+                    }
+                }
+            },
+            'tottori': {
+                'name': '鳥取県',
+                'region': '中国・四国',
+                'transmitters': {
+                    'tottori': {
+                        'name': '鳥取',
+                        'stations': {
+                            21: {'name': 'NHK総合・鳥取', 'call_sign': 'JOAK-DTV'},
+                            13: {'name': 'NHK Eテレ鳥取', 'call_sign': 'JOAB-DTV'},
+                            24: {'name': 'BSS山陰放送', 'call_sign': 'JORY-DTV'},
+                            28: {'name': 'TSK山陰中央テレビ', 'call_sign': 'JOCX-DTV'},
+                        }
+                    }
+                }
+            },
+            'kagawa': {
+                'name': '香川県',
+                'region': '中国・四国',
+                'transmitters': {
+                    'takamatsu': {
+                        'name': '高松',
+                        'stations': {
+                            37: {'name': 'NHK総合・高松', 'call_sign': 'JOKK-DTV'},
+                            13: {'name': 'NHK Eテレ高松', 'call_sign': 'JOKB-DTV'},
+                            29: {'name': 'RNC西日本放送', 'call_sign': 'JORY-DTV'},
+                            31: {'name': 'KSB瀬戸内海放送', 'call_sign': 'JOAY-DTV'},
+                        }
+                    }
+                }
+            },
+            'tokushima': {
+                'name': '徳島県',
+                'region': '中国・四国',
+                'transmitters': {
+                    'tokushima': {
+                        'name': '徳島',
+                        'stations': {
+                            19: {'name': 'NHK総合・徳島', 'call_sign': 'JOAK-DTV'},
+                            13: {'name': 'NHK Eテレ徳島', 'call_sign': 'JOAB-DTV'},
+                            15: {'name': '四国放送', 'call_sign': 'JORY-DTV'},
+                        }
+                    }
+                }
+            },
+            'ehime': {
+                'name': '愛媛県',
+                'region': '中国・四国',
+                'transmitters': {
+                    'matsuyama': {
+                        'name': '松山',
+                        'stations': {
+                            20: {'name': 'NHK総合・松山', 'call_sign': 'JOAK-DTV'},
+                            13: {'name': 'NHK Eテレ松山', 'call_sign': 'JOAB-DTV'},
+                            25: {'name': 'RNB南海放送', 'call_sign': 'JORY-DTV'},
+                            29: {'name': 'ITV愛媛朝日テレビ', 'call_sign': 'JOAY-DTV'},
+                            33: {'name': 'あいテレビ', 'call_sign': 'JOCX-DTV'},
+                            37: {'name': 'テレビ愛媛', 'call_sign': 'JOCX-DTV'},
+                        }
+                    }
+                }
+            },
+            'kochi': {
+                'name': '高知県',
+                'region': '中国・四国',
+                'transmitters': {
+                    'kochi': {
+                        'name': '高知',
+                        'stations': {
+                            19: {'name': 'NHK総合・高知', 'call_sign': 'JOAK-DTV'},
+                            13: {'name': 'NHK Eテレ高知', 'call_sign': 'JOAB-DTV'},
+                            22: {'name': 'RKC高知放送', 'call_sign': 'JORY-DTV'},
+                            27: {'name': 'KUTVテレビ高知', 'call_sign': 'JOCX-DTV'},
+                            25: {'name': 'KSS高知さんさんテレビ', 'call_sign': 'JOCX-DTV'},
+                        }
+                    }
+                }
+            }
+        })
+        
+        # 九州・沖縄地方
+        self._prefectures.update({
+            'fukuoka': {
+                'name': '福岡県',
+                'region': '九州・沖縄',
+                'transmitters': {
+                    'fukuoka': {
+                        'name': '福岡',
+                        'stations': {
+                            18: {'name': 'NHK総合・福岡', 'call_sign': 'JOLK-DTV'},
+                            13: {'name': 'NHK Eテレ福岡', 'call_sign': 'JOLB-DTV'},
+                            20: {'name': 'RKB毎日放送', 'call_sign': 'JOFR-DTV'},
+                            24: {'name': 'FBS福岡放送', 'call_sign': 'JOFH-DTV'},
+                            26: {'name': 'KBC九州朝日放送', 'call_sign': 'JOTY-DTV'},
+                            28: {'name': 'テレビ西日本', 'call_sign': 'JOCI-DTV'},
+                            35: {'name': 'TVQ九州放送', 'call_sign': 'JOTY-DTV'},
+                        }
+                    }
+                }
+            },
+            'saga': {
+                'name': '佐賀県',
+                'region': '九州・沖縄',
+                'transmitters': {
+                    'saga': {
+                        'name': '佐賀',
+                        'stations': {
+                            19: {'name': 'NHK総合・佐賀', 'call_sign': 'JOSK-DTV'},
+                            13: {'name': 'NHK Eテレ佐賀', 'call_sign': 'JOSB-DTV'},
+                            17: {'name': 'STSサガテレビ', 'call_sign': 'JOCX-DTV'},
+                        }
+                    }
+                }
+            },
+            'nagasaki': {
+                'name': '長崎県',
+                'region': '九州・沖縄',
+                'transmitters': {
+                    'nagasaki': {
+                        'name': '長崎',
+                        'stations': {
+                            16: {'name': 'NHK総合・長崎', 'call_sign': 'JOAG-DTV'},
+                            13: {'name': 'NHK Eテレ長崎', 'call_sign': 'JOAB-DTV'},
+                            21: {'name': 'NBC長崎放送', 'call_sign': 'JORY-DTV'},
+                            23: {'name': 'KTNテレビ長崎', 'call_sign': 'JOCX-DTV'},
+                            25: {'name': 'NCC長崎文化放送', 'call_sign': 'JOCX-DTV'},
+                            27: {'name': 'NIB長崎国際テレビ', 'call_sign': 'JOAY-DTV'},
+                        }
+                    }
+                }
+            },
+            'kumamoto': {
+                'name': '熊本県',
+                'region': '九州・沖縄',
+                'transmitters': {
+                    'kumamoto': {
+                        'name': '熊本',
+                        'stations': {
+                            19: {'name': 'NHK総合・熊本', 'call_sign': 'JOAK-DTV'},
+                            13: {'name': 'NHK Eテレ熊本', 'call_sign': 'JOAB-DTV'},
+                            17: {'name': 'RKK熊本放送', 'call_sign': 'JORY-DTV'},
+                            22: {'name': 'TKUテレビ熊本', 'call_sign': 'JOCX-DTV'},
+                            24: {'name': 'KKTくまもと県民テレビ', 'call_sign': 'JOCX-DTV'},
+                            34: {'name': 'KAB熊本朝日放送', 'call_sign': 'JOAY-DTV'},
+                        }
+                    }
+                }
+            },
+            'oita': {
+                'name': '大分県',
+                'region': '九州・沖縄',
+                'transmitters': {
+                    'oita': {
+                        'name': '大分',
+                        'stations': {
+                            21: {'name': 'NHK総合・大分', 'call_sign': 'JOAK-DTV'},
+                            13: {'name': 'NHK Eテレ大分', 'call_sign': 'JOAB-DTV'},
+                            36: {'name': 'OBS大分放送', 'call_sign': 'JORY-DTV'},
+                            24: {'name': 'TOSテレビ大分', 'call_sign': 'JOCX-DTV'},
+                            27: {'name': 'OAB大分朝日放送', 'call_sign': 'JOAY-DTV'},
+                        }
+                    }
+                }
+            },
+            'miyazaki': {
+                'name': '宮崎県',
+                'region': '九州・沖縄',
+                'transmitters': {
+                    'miyazaki': {
+                        'name': '宮崎',
+                        'stations': {
+                            19: {'name': 'NHK総合・宮崎', 'call_sign': 'JOAK-DTV'},
+                            13: {'name': 'NHK Eテレ宮崎', 'call_sign': 'JOAB-DTV'},
+                            35: {'name': 'MRT宮崎放送', 'call_sign': 'JORY-DTV'},
+                            31: {'name': 'UMKテレビ宮崎', 'call_sign': 'JOCX-DTV'},
+                        }
+                    }
+                }
+            },
+            'kagoshima': {
+                'name': '鹿児島県',
+                'region': '九州・沖縄',
+                'transmitters': {
+                    'kagoshima': {
+                        'name': '鹿児島',
+                        'stations': {
+                            17: {'name': 'NHK総合・鹿児島', 'call_sign': 'JOAK-DTV'},
+                            13: {'name': 'NHK Eテレ鹿児島', 'call_sign': 'JOAB-DTV'},
+                            19: {'name': 'MBC南日本放送', 'call_sign': 'JORY-DTV'},
+                            30: {'name': 'KTS鹿児島テレビ', 'call_sign': 'JOCX-DTV'},
+                            32: {'name': 'KKB鹿児島放送', 'call_sign': 'JOAY-DTV'},
+                        }
+                    }
+                }
+            },
+            'okinawa': {
+                'name': '沖縄県',
+                'region': '九州・沖縄',
+                'transmitters': {
+                    'naha': {
+                        'name': '那覇',
+                        'stations': {
+                            15: {'name': 'NHK総合・沖縄', 'call_sign': 'JORK-DTV'},
+                            13: {'name': 'NHK Eテレ沖縄', 'call_sign': 'JORB-DTV'},
+                            19: {'name': '琉球放送', 'call_sign': 'JORY-DTV'},
+                            21: {'name': '沖縄テレビ', 'call_sign': 'JOPY-DTV'},
+                            23: {'name': '琉球朝日放送', 'call_sign': 'JOPY-DTV'},
+                        }
+                    }
+                }
+            }
+        })
+        
+        logger.debug(f"47都道府県放送データベース構築完了: {len(self._prefectures)}都道府県")
+    
+    def get_prefectures(self) -> List[str]:
+        """利用可能な都道府県コード一覧を取得"""
+        return list(self._prefectures.keys())
+    
+    def get_prefecture_info(self, prefecture_code: str) -> Optional[Dict]:
+        """都道府県の詳細情報を取得"""
+        return self._prefectures.get(prefecture_code)
+    
+    def get_transmitters(self, prefecture_code: str) -> Optional[Dict]:
+        """指定都道府県の送信所一覧を取得"""
+        pref_info = self._prefectures.get(prefecture_code)
+        if pref_info:
+            return pref_info.get('transmitters', {})
+        return None
+    
+    def get_stations_by_transmitter(self, prefecture_code: str, transmitter_code: str) -> Optional[Dict]:
+        """指定送信所の放送局一覧を取得"""
+        transmitters = self.get_transmitters(prefecture_code)
+        if transmitters and transmitter_code in transmitters:
+            return transmitters[transmitter_code].get('stations', {})
+        return None
+    
+    def search_stations_by_channel(self, channel: int) -> List[Tuple[str, str, str, Dict]]:
+        """物理チャンネル番号で放送局を検索"""
+        results = []
+        for pref_code, pref_info in self._prefectures.items():
+            for trans_code, trans_info in pref_info.get('transmitters', {}).items():
+                for ch, station in trans_info.get('stations', {}).items():
+                    if ch == channel:
+                        results.append((pref_code, trans_code, trans_info['name'], station))
+        return results
+    
+    def get_all_stations_by_prefecture(self, prefecture_code: str) -> List[Tuple[int, str, str, Dict]]:
+        """指定都道府県のすべての放送局を取得"""
+        stations = []
+        pref_info = self._prefectures.get(prefecture_code)
+        if not pref_info:
+            return stations
+            
+        for trans_code, trans_info in pref_info.get('transmitters', {}).items():
+            for channel, station in trans_info.get('stations', {}).items():
+                stations.append((channel, trans_code, trans_info['name'], station))
+        
+        return sorted(stations, key=lambda x: x[0])  # チャンネル順でソート
