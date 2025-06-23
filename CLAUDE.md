@@ -47,11 +47,16 @@ python oneseg.py -c 13 -v | ffplay -
 
 ### Testing
 ```bash
-# Run unit tests
-python -m pytest tests/
+# Run all tests with custom test runner
+python run_tests.py
 
-# Run specific test file
-python -m pytest tests/test_rtl_interface.py -v
+# Run specific test categories
+python tests/unit/test_isdb_basic.py           # Unit tests
+python tests/integration/test_ofdm_pipeline.py # Integration tests  
+python tests/system/test_mode3_system.py       # System tests
+
+# Run with pytest (if available)
+python -m pytest tests/ -v
 ```
 
 ## Task Management System
@@ -118,11 +123,58 @@ oneseg/
 ├── requirements.txt # Python dependencies
 ├── setup.py         # Package configuration
 ├── oneseg.py        # Main CLI script
+├── run_tests.py     # Unified test runner
 ├── src/             # Core implementation modules
-│   ├── rtl_interface.py  # RTL-SDR hardware control
-│   ├── isdb_decoder.py   # ISDB-T signal processing
-│   ├── oneseg_parser.py  # Transport stream analysis
-│   └── ts_output.py      # MPEG-TS output handling
-└── tests/           # Unit tests
-    └── test_*.py    # Test modules
+│   ├── rtl_interface.py      # RTL-SDR hardware control
+│   ├── channel_manager.py    # Channel/frequency management
+│   ├── isdb_decoder.py       # ISDB-T signal processing & Mode3
+│   ├── japan_broadcasting_database.py # 47-prefecture station database
+│   ├── oneseg_parser.py      # Transport stream analysis (future)
+│   └── ts_output.py          # MPEG-TS output handling (future)
+└── tests/           # Test suites (organized by test type)
+    ├── unit/        # Unit tests - individual module functionality
+    │   ├── test_isdb_basic.py      # Basic ISDB decoder tests
+    │   └── test_mode3_basic.py     # Basic Mode3 feature tests
+    ├── integration/ # Integration tests - multi-module interactions
+    │   ├── test_isdb_pipeline.py   # Signal processing pipeline
+    │   └── test_ofdm_pipeline.py   # OFDM demodulation pipeline
+    └── system/      # System tests - full application workflows
+        └── test_mode3_system.py    # Complete Mode3 processing
 ```
+
+## Test Organization Strategy
+
+### Test Categories
+
+**Unit Tests** (`tests/unit/`)
+- Test individual modules and functions in isolation
+- Fast execution (< 1 second per test)
+- Mock external dependencies 
+- Focus on algorithm correctness and edge cases
+- Examples: QPSK demodulation, frequency calculations, carrier extraction
+
+**Integration Tests** (`tests/integration/`)  
+- Test interactions between multiple modules
+- Moderate execution time (1-10 seconds)
+- Use real implementations with minimal mocking
+- Focus on data flow and interface compatibility
+- Examples: Full signal processing pipeline, OFDM + Mode3 integration
+
+**System Tests** (`tests/system/`)
+- Test complete workflows from end-to-end
+- Longer execution time (10+ seconds) 
+- Use realistic signal conditions and noise
+- Focus on overall functionality and performance
+- Examples: Complete One-Seg reception simulation
+
+### Test Execution
+
+Use `python run_tests.py` to execute all tests with organized output and timing information. Each test category can also be run independently for targeted testing during development.
+
+### Test Development Guidelines
+
+1. **Test Naming**: Use descriptive names starting with `test_`
+2. **Path Handling**: All tests use relative imports from project root  
+3. **Dependencies**: Gracefully handle missing optional dependencies (numpy, scipy)
+4. **Timeouts**: System tests include timeout handling for long-running operations
+5. **Coverage**: Aim for comprehensive coverage of signal processing algorithms

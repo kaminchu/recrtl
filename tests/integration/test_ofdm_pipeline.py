@@ -12,7 +12,8 @@ import math
 import cmath
 
 # プロジェクトのsrcディレクトリをPythonパスに追加
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.join(project_root, 'src'))
 
 try:
     import numpy as np

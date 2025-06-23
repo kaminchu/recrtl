@@ -60,7 +60,8 @@ except ImportError:
     np = MockNumpy()
 
 # プロジェクトのsrcディレクトリをPythonパスに追加
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.join(project_root, 'src'))
 
 from isdb_decoder import ISDBDecoder
 
