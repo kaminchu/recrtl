@@ -49,7 +49,8 @@ def show_channel_list(area: str = 'tokyo'):
             freq_str = f"{info['frequency_mhz']:.6f} MHz"
             if 'station' in info:
                 station = info['station']
-                print(f"  ch{channel:2d}: {freq_str} - {station['name']}", file=sys.stderr)
+                region_info = f" ({station['region']})" if 'region' in station else ""
+                print(f"  ch{channel:2d}: {freq_str} - {station['name']}{region_info}", file=sys.stderr)
             else:
                 print(f"  ch{channel:2d}: {freq_str}", file=sys.stderr)
         
@@ -60,6 +61,34 @@ def show_channel_list(area: str = 'tokyo'):
         
     except Exception as e:
         print(f"チャンネル一覧表示エラー: {e}", file=sys.stderr)
+
+def show_region_list():
+    """利用可能な地域一覧を表示"""
+    try:
+        from channel_manager import ChannelManager
+        
+        ch_mgr = ChannelManager()
+        
+        print("\n利用可能な地域一覧:", file=sys.stderr)
+        print("-" * 50, file=sys.stderr)
+        
+        # 地域ブロック情報を表示
+        if hasattr(ch_mgr, '_regions'):
+            for region_name, areas in ch_mgr._regions.items():
+                print(f"【{region_name}】", file=sys.stderr)
+                for area in areas:
+                    area_channels = ch_mgr.list_channels(area)
+                    print(f"  {area}: {len(area_channels)}局", file=sys.stderr)
+                print("", file=sys.stderr)
+        
+        print("使用例:", file=sys.stderr)
+        print("  --list-channels tokyo    # 東京の放送局一覧", file=sys.stderr)
+        print("  --list-channels osaka    # 大阪の放送局一覧", file=sys.stderr)
+        print("  --list-channels hokkaido # 北海道の放送局一覧", file=sys.stderr)
+        print("-" * 50, file=sys.stderr)
+        
+    except Exception as e:
+        print(f"地域一覧表示エラー: {e}", file=sys.stderr)
 
 def list_rtl_devices():
     """利用可能なRTL-SDRデバイスを一覧表示"""
@@ -138,8 +167,13 @@ def main():
     )
     parser.add_argument(
         '--list-channels',
-        choices=['tokyo', 'osaka', 'nagoya'],
+        choices=['tokyo', 'osaka', 'nagoya', 'hokkaido', 'aomori', 'hiroshima', 'fukuoka', 'okinawa'],
         help='指定地域のチャンネル一覧を表示'
+    )
+    parser.add_argument(
+        '--list-regions',
+        action='store_true',
+        help='利用可能な地域一覧を表示'
     )
     parser.add_argument(
         '-v', '--verbose',
@@ -160,6 +194,11 @@ def main():
     # チャンネル一覧表示モード
     if args.list_channels:
         show_channel_list(args.list_channels)
+        sys.exit(0)
+    
+    # 地域一覧表示モード
+    if args.list_regions:
+        show_region_list()
         sys.exit(0)
     
     # 周波数の決定
@@ -189,7 +228,8 @@ def main():
                 ch_info = ch_mgr.get_channel_info(args.channel)
                 if ch_info and 'station' in ch_info:
                     station = ch_info['station']
-                    logger.info(f"放送局: {station['name']} ({station['area']})")
+                    area_info = station.get('area', '不明')
+                    logger.info(f"放送局: {station['name']} ({area_info})")
                     
     except Exception as e:
         logger.error(f"チャンネル管理エラー: {e}")
