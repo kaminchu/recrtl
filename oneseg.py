@@ -312,7 +312,21 @@ def main():
                 device_info = rtl.get_device_info()
                 logger.debug(f"デバイス情報: {device_info}")
             
-            logger.info("信号処理パイプラインを構築中...")
+            # ISDB復調器を初期化
+            logger.info("ISDB信号処理パイプラインを構築中...")
+            try:
+                from isdb_decoder import ISDBDecoder
+                isdb_decoder = ISDBDecoder(sample_rate=args.sample_rate)
+                logger.info("ISDB復調器初期化完了")
+                
+                if args.verbose:
+                    decoder_stats = isdb_decoder.get_signal_stats()
+                    logger.debug(f"ISDB復調器統計: {decoder_stats}")
+                
+            except Exception as e:
+                logger.error(f"ISDB復調器初期化失敗: {e}")
+                isdb_decoder = None
+            
             logger.info("MPEG-TS出力準備完了")
             
             # ダミーのTSパケットヘッダー（188バイト、同期バイト0x47で開始）
@@ -321,28 +335,72 @@ def main():
             logger.info("標準出力にMPEG-TSストリームを出力中...")
             logger.info("終了するには Ctrl+C を押してください")
             
-            # 実際の実装では無限ループでリアルタイム処理
-            # 現在はダミーパケットを少数出力して終了
-            logger.warning("注意: 信号処理は未実装のため、ダミーTS出力を行います")
-            
-            # サンプル読み取りテスト
-            if args.verbose:
-                logger.info("I/Qサンプル読み取りテスト...")
-                samples = rtl.read_samples(1024)
-                if samples is not None:
-                    if NUMPY_AVAILABLE:
-                        avg_power = np.mean(np.abs(samples)**2)
-                        logger.info(f"サンプル読み取り成功: {len(samples)}個 (平均パワー: {avg_power:.6f})")
+            # 信号処理・OFDM復調テスト
+            if isdb_decoder and args.verbose:
+                logger.info("信号処理・OFDM復調テスト実行中...")
+                
+                # テストサンプル読み取り（OFDMシンボル複数分）
+                required_samples = isdb_decoder.SYMBOL_SIZE * 3  # 3シンボル分
+                test_samples = rtl.read_samples(max(4096, required_samples))
+                
+                if test_samples is not None:
+                    logger.info(f"生サンプル読み取り: {len(test_samples)}個")
+                    
+                    # 入力信号統計
+                    if len(test_samples) > 0:
+                        avg_power_in = sum(abs(x)**2 for x in test_samples) / len(test_samples)
+                        dc_component = sum(test_samples) / len(test_samples)
+                        logger.info(f"入力信号: 平均パワー={avg_power_in:.6f}, DC={abs(dc_component):.6f}")
+                    
+                    # 1. 基本信号処理適用
+                    processed_samples = isdb_decoder.process_samples(test_samples)
+                    logger.info(f"前処理後サンプル: {len(processed_samples)}個")
+                    
+                    if len(processed_samples) > 0:
+                        avg_power_out = sum(abs(x)**2 for x in processed_samples) / len(processed_samples)
+                        dc_component_out = sum(processed_samples) / len(processed_samples)
+                        logger.info(f"前処理後信号: 平均パワー={avg_power_out:.6f}, DC={abs(dc_component_out):.6f}")
+                    
+                    # 2. OFDM復調テスト
+                    if len(processed_samples) >= isdb_decoder.SYMBOL_SIZE:
+                        logger.info("OFDM復調テスト実行中...")
+                        
+                        try:
+                            # OFDM復調実行
+                            ofdm_symbols = isdb_decoder.process_ofdm_stream(processed_samples)
+                            
+                            if ofdm_symbols:
+                                logger.info(f"OFDM復調成功: {len(ofdm_symbols)}シンボル復調")
+                                
+                                # 復調結果統計
+                                for i, symbol in enumerate(ofdm_symbols):
+                                    if len(symbol) > 0:
+                                        symbol_power = sum(abs(c)**2 for c in symbol) / len(symbol)
+                                        logger.info(f"シンボル{i}: {len(symbol)}キャリア, パワー={symbol_power:.6f}")
+                                
+                                logger.info("✓ OFDM復調テスト完了")
+                            else:
+                                logger.warning("OFDM復調失敗: シンボル同期エラーまたはサンプル不足")
+                                
+                        except Exception as e:
+                            logger.error(f"OFDM復調エラー: {e}")
                     else:
-                        logger.info(f"サンプル読み取り成功: {len(samples)}個")
+                        logger.warning(f"OFDM復調スキップ: サンプル不足 ({len(processed_samples)} < {isdb_decoder.SYMBOL_SIZE})")
+                    
+                    # 最終統計
+                    final_stats = isdb_decoder.get_signal_stats()
+                    logger.info(f"処理統計: AGCゲイン={final_stats['agc_gain']:.3f}, DC推定={final_stats['dc_estimate']['magnitude']:.6f}")
                 else:
                     logger.error("サンプル読み取り失敗")
+            
+            # 現在はダミーTS出力（ISDB-T Mode3・TS生成未実装）
+            logger.warning("注意: ISDB-T Mode3対応・TS生成は未実装のため、ダミーTS出力を行います")
             
             for _ in range(10):
                 sys.stdout.buffer.write(dummy_ts_packet)
                 sys.stdout.buffer.flush()
             
-            logger.info("ダミー出力完了（実装完了後は連続出力になります）")
+            logger.info("信号処理・OFDM復調テスト完了")
         
     except KeyboardInterrupt:
         logger.info("ユーザーによって中断されました")
