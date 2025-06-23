@@ -34,17 +34,32 @@ def setup_logging(verbose: bool = False):
     logger = logging.getLogger('oneseg')
     return logger
 
-def create_channel_map():
-    """日本の地上デジタル放送チャンネルマップを作成"""
-    channel_map = {}
-    
-    # UHF帯域（13-62ch）の周波数計算
-    # 周波数 = (ch - 13) × 6 + 473.142857 MHz
-    for ch in range(13, 63):
-        freq_mhz = (ch - 13) * 6 + 473.142857
-        channel_map[ch] = freq_mhz * 1e6  # Hzに変換
-    
-    return channel_map
+def show_channel_list(area: str = 'tokyo'):
+    """指定地域のチャンネル一覧を表示"""
+    try:
+        from channel_manager import ChannelManager
+        
+        ch_mgr = ChannelManager()
+        channels = ch_mgr.list_channels(area)
+        
+        print(f"\n{area.upper()}地域 チャンネル一覧:", file=sys.stderr)
+        print("-" * 60, file=sys.stderr)
+        
+        for channel, info in channels[:10]:  # 最初の10チャンネルのみ表示
+            freq_str = f"{info['frequency_mhz']:.6f} MHz"
+            if 'station' in info:
+                station = info['station']
+                print(f"  ch{channel:2d}: {freq_str} - {station['name']}", file=sys.stderr)
+            else:
+                print(f"  ch{channel:2d}: {freq_str}", file=sys.stderr)
+        
+        if len(channels) > 10:
+            print(f"  ... その他{len(channels)-10}チャンネル", file=sys.stderr)
+        
+        print("-" * 60, file=sys.stderr)
+        
+    except Exception as e:
+        print(f"チャンネル一覧表示エラー: {e}", file=sys.stderr)
 
 def list_rtl_devices():
     """利用可能なRTL-SDRデバイスを一覧表示"""
@@ -122,6 +137,11 @@ def main():
         help='利用可能なRTL-SDRデバイスを一覧表示'
     )
     parser.add_argument(
+        '--list-channels',
+        choices=['tokyo', 'osaka', 'nagoya'],
+        help='指定地域のチャンネル一覧を表示'
+    )
+    parser.add_argument(
         '-v', '--verbose',
         action='store_true',
         help='詳細ログ出力（信号強度等）'
@@ -137,14 +157,49 @@ def main():
         success = list_rtl_devices()
         sys.exit(0 if success else 1)
     
+    # チャンネル一覧表示モード
+    if args.list_channels:
+        show_channel_list(args.list_channels)
+        sys.exit(0)
+    
     # 周波数の決定
-    channel_map = create_channel_map()
-    if args.frequency:
-        frequency_hz = args.frequency * 1e6
-        logger.info(f"周波数直接指定: {args.frequency:.6f} MHz")
-    else:
-        frequency_hz = channel_map[args.channel]
-        logger.info(f"チャンネル {args.channel}: {frequency_hz/1e6:.6f} MHz")
+    try:
+        from channel_manager import ChannelManager
+        ch_mgr = ChannelManager()
+        
+        if args.frequency:
+            frequency_hz = args.frequency * 1e6
+            logger.info(f"周波数直接指定: {args.frequency:.6f} MHz")
+            
+            # 近いチャンネルを検索
+            if args.verbose:
+                near_channel = ch_mgr.find_channel_by_frequency(frequency_hz)
+                if near_channel:
+                    logger.debug(f"最寄りチャンネル: {near_channel}")
+        else:
+            frequency_hz = ch_mgr.get_frequency_hz(args.channel)
+            if frequency_hz is None:
+                logger.error(f"無効なチャンネル番号: {args.channel}")
+                sys.exit(1)
+            
+            logger.info(f"チャンネル {args.channel}: {frequency_hz/1e6:.6f} MHz")
+            
+            # 放送局情報を表示
+            if args.verbose:
+                ch_info = ch_mgr.get_channel_info(args.channel)
+                if ch_info and 'station' in ch_info:
+                    station = ch_info['station']
+                    logger.info(f"放送局: {station['name']} ({station['area']})")
+                    
+    except Exception as e:
+        logger.error(f"チャンネル管理エラー: {e}")
+        # フォールバック: 従来の計算方式
+        if args.frequency:
+            frequency_hz = args.frequency * 1e6
+        else:
+            freq_mhz = (args.channel - 13) * 6 + 473.142857
+            frequency_hz = freq_mhz * 1e6
+        logger.info(f"フォールバック: 周波数 {frequency_hz/1e6:.6f} MHz")
     
     # 設定情報を表示
     logger.info(f"RTL-SDRデバイス: {args.device}")
