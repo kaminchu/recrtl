@@ -1,0 +1,12 @@
+# RTL-SDR制御
+pyrtlsdr>=0.2.92
+
+# 数値計算・配列操作
+numpy>=1.21.0
+
+# 信号処理（FFT等）
+scipy>=1.7.0
+
+# 開発・テスト用
+pytest>=6.0.0
+pytest-cov>=2.12.0
