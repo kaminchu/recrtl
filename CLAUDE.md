@@ -116,9 +116,9 @@ RTL-SDR dongles have significant individual differences in:
 
 ```
 oneseg/
-├── SPEC.md          # Technical specifications (Japanese)
-├── TASK.md          # Implementation task breakdown (Japanese)  
-├── TODO.md          # Progress tracking (Japanese)
+├── SPEC.md          # Technical specifications (in Japanese)
+├── TASK.md          # Implementation task breakdown (in Japanese)  
+├── TODO.md          # Progress tracking (in Japanese)
 ├── CLAUDE.md        # This file (English)
 ├── requirements.txt # Python dependencies
 ├── setup.py         # Package configuration
@@ -182,4 +182,4 @@ Use `python run_tests.py` to execute all tests with organized output and timing 
 ## Development Guidelines
 
 ### Workflow Memories
-- タスク完了時には必ずcommitすること
+- Always commit after completing each task
