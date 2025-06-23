@@ -219,13 +219,23 @@ class RTLInterface:
                 logger.debug(f"開発モード: ダミーサンプル生成 {num_samples}個")
                 
                 if NUMPY_AVAILABLE:
-                    # ノイズ + 弱い正弦波信号をシミュレート
+                    # ISDB-Tに近い信号構造をシミュレート
                     t = np.arange(num_samples) / self._sample_rate
                     
-                    # ベースバンド信号のシミュレーション
-                    # 実際のISDB-T信号の代わりにダミー信号
-                    signal_freq = 1000  # 1kHz のテスト信号
-                    signal = 0.1 * np.exp(1j * 2 * np.pi * signal_freq * t)
+                    # 複数のキャリアを持つOFDM様信号をシミュレート
+                    signal = np.zeros(num_samples, dtype=complex)
+                    
+                    # ISDB-T Mode3のキャリア数（13セグメント）をシミュレート
+                    carrier_spacing = 1000  # キャリア間隔
+                    num_carriers = 13  # セグメント数
+                    
+                    for i in range(num_carriers):
+                        carrier_freq = (i - num_carriers//2) * carrier_spacing
+                        # ランダム位相・振幅でキャリアを生成
+                        amplitude = 0.05 + 0.03 * np.random.random()
+                        phase = 2 * np.pi * np.random.random()
+                        carrier = amplitude * np.exp(1j * (2 * np.pi * carrier_freq * t + phase))
+                        signal += carrier
                     
                     # ノイズ追加
                     noise_power = 0.05

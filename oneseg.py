@@ -33,6 +33,11 @@ def setup_logging(verbose: bool = False):
         stream=sys.stderr
     )
     
+    # 開発モードでverboseでない場合、ISDBデコーダーのデバッグログを抑制
+    if not verbose:
+        logging.getLogger('isdb_decoder').setLevel(logging.WARNING)
+        logging.getLogger('rtl_interface').setLevel(logging.INFO)
+    
     logger = logging.getLogger('oneseg')
     return logger
 
