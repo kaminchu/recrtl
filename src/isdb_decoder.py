@@ -982,3 +982,34 @@ class ISDBDecoder:
         
         logger.info(f"ISDB-T Mode3+ECC処理完了: {symbol_count}シンボル処理, 合計{total_corrected_bytes}バイト訂正")
         return ecc_results
+    
+    def extract_transport_stream(self, ecc_results: List[dict]) -> bytes:
+        """
+        エラー訂正済み結果からMPEG-2 Transport Streamを抽出
+        
+        Args:
+            ecc_results: エラー訂正処理結果リスト
+            
+        Returns:
+            bytes: 抽出されたTransport Streamデータ
+        """
+        if not ecc_results:
+            logger.warning("TS抽出: エラー訂正結果が空です")
+            return b''
+        
+        # エラー訂正済みデータを結合
+        ts_data = b''
+        total_bytes = 0
+        
+        for result in ecc_results:
+            if result.get('ecc_success', False) and 'corrected_data' in result:
+                corrected_data = result['corrected_data']
+                if isinstance(corrected_data, list):
+                    # リスト形式の場合はバイト配列に変換
+                    ts_data += bytes(corrected_data)
+                elif isinstance(corrected_data, bytes):
+                    ts_data += corrected_data
+                total_bytes += len(corrected_data)
+        
+        logger.info(f"TS抽出: 合計{total_bytes}バイトのTransport Streamデータを抽出")
+        return ts_data

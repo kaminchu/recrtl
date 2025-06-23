@@ -70,6 +70,8 @@ def main():
         # Unit Tests
         ("tests/unit/test_isdb_basic.py", "Unit: ISDB基本機能テスト"),
         ("tests/unit/test_mode3_basic.py", "Unit: Mode3基本機能テスト"),
+        ("tests/unit/test_error_correction.py", "Unit: エラー訂正機能テスト"),
+        ("tests/unit/test_ts_parser.py", "Unit: Transport Streamパーサーテスト"),
         
         # Integration Tests  
         ("tests/integration/test_isdb_pipeline.py", "Integration: ISDB信号処理パイプライン"),

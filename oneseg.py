@@ -403,6 +403,42 @@ def main():
                                 logger.info(f"✓ 合計復調ビット数: {total_bits}")
                                 logger.info(f"✓ 合計エラー訂正バイト数: {total_corrected_bytes}")
                                 logger.info(f"✓ エラー訂正成功率: {ecc_success_count}/{len(ecc_results)} ({100*ecc_success_count/len(ecc_results):.1f}%)")
+                                
+                                # 3. Transport Stream 解析・抽出テスト
+                                if ecc_success_count > 0:
+                                    logger.info("Transport Stream解析テスト実行中...")
+                                    
+                                    try:
+                                        from ts_parser import TSParser
+                                        
+                                        # TS抽出
+                                        ts_data = isdb_decoder.extract_transport_stream(ecc_results)
+                                        logger.info(f"TS抽出: {len(ts_data)}バイト")
+                                        
+                                        if ts_data:
+                                            # TSパーサーで解析
+                                            ts_parser = TSParser()
+                                            ts_packets = ts_parser.parse_data(ts_data)
+                                            logger.info(f"TS解析: {len(ts_packets)}パケット検出")
+                                            
+                                            # ストリーム情報取得
+                                            stream_info = ts_parser.get_stream_info()
+                                            if stream_info:
+                                                logger.info(f"✓ {len(stream_info)}プログラム発見")
+                                                for prog_num, info in stream_info.items():
+                                                    logger.info(f"  Program {prog_num}: Video={len(info['video_pids'])}, Audio={len(info['audio_pids'])}")
+                                            else:
+                                                logger.info("プログラム情報未検出（PAT/PMT解析中...）")
+                                            
+                                            # パーサー統計
+                                            parser_stats = ts_parser.get_parser_stats()
+                                            logger.info(f"✓ TSパーサー統計: {parser_stats['programs_found']}プログラム")
+                                        else:
+                                            logger.warning("TS抽出データが空です")
+                                    
+                                    except Exception as ts_e:
+                                        logger.error(f"Transport Stream解析エラー: {ts_e}")
+                                
                                 logger.info("✓ ISDB-T Mode3+ECC復調テスト完了")
                             else:
                                 logger.warning("ISDB-T Mode3+ECC復調失敗: シンボル同期エラーまたはサンプル不足")

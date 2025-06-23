@@ -486,6 +486,7 @@ class ErrorCorrectionProcessor:
                 final_data.extend(deinterleaved_bytes[-remainder:])
             
             stats['output_bytes'] = len(final_data)
+            stats['corrected_data'] = final_data  # 訂正済みデータを統計に追加
             
             logger.info(f"エラー訂正完了: {stats['input_bits']}ビット → {stats['output_bytes']}バイト")
             return final_data, stats
