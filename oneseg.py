@@ -10,6 +10,7 @@ import argparse
 import logging
 import sys
 import os
+import time
 
 try:
     import numpy as np
@@ -454,14 +455,93 @@ def main():
                 else:
                     logger.error("サンプル読み取り失敗")
             
-            # 現在はダミーTS出力（TS解析・生成未実装）
-            logger.warning("注意: トランスポートストリーム解析・生成は未実装のため、ダミーTS出力を行います")
+            # 実際のTS出力処理
+            logger.info("MPEG-TS出力処理を開始します...")
             
-            for _ in range(10):
-                sys.stdout.buffer.write(dummy_ts_packet)
-                sys.stdout.buffer.flush()
+            try:
+                from ts_output import TSOutputManager
+                
+                # TS出力管理を初期化
+                ts_output_manager = TSOutputManager(buffer_size=512, output_rate_bps=None)
+                ts_output_manager.start_output()
+                logger.info("TS出力管理開始")
+                
+                # 継続的な信号処理・TS出力ループ
+                logger.info("連続信号処理・リアルタイムTS出力中...")
+                logger.info("終了するには Ctrl+C を押してください")
+                
+                packet_count = 0
+                while True:
+                    try:
+                        # RTL-SDRから新しいサンプルを読み取り
+                        new_samples = rtl.read_samples(required_samples)
+                        if new_samples is None:
+                            logger.warning("サンプル読み取り失敗")
+                            time.sleep(0.1)
+                            continue
+                        
+                        # 1. 信号処理
+                        processed_samples = isdb_decoder.process_samples(new_samples)
+                        
+                        if len(processed_samples) >= isdb_decoder.SYMBOL_SIZE:
+                            # 2. ISDB-T Mode3+ECC復調
+                            ecc_results = isdb_decoder.process_isdb_mode3_with_ecc(processed_samples)
+                            
+                            if ecc_results:
+                                # 3. Transport Stream抽出
+                                ts_data = isdb_decoder.extract_transport_stream(ecc_results)
+                                
+                                if ts_data and len(ts_data) >= 188:
+                                    # 4. TSパーサーで解析
+                                    from ts_parser import TSParser
+                                    ts_parser = TSParser()
+                                    ts_packets = ts_parser.parse_data(ts_data)
+                                    
+                                    if ts_packets:
+                                        # 5. ストリーム情報取得
+                                        stream_info = ts_parser.get_stream_info()
+                                        
+                                        # 6. TS出力処理
+                                        success = ts_output_manager.process_and_output(
+                                            ts_data, stream_info
+                                        )
+                                        
+                                        if success:
+                                            packet_count += len(ts_packets)
+                                            if packet_count % 100 == 0:
+                                                logger.debug(f"TS出力: 累計{packet_count}パケット")
+                        
+                        # 短時間待機（CPU負荷軽減）
+                        time.sleep(0.01)
+                        
+                    except KeyboardInterrupt:
+                        break
+                    except Exception as processing_error:
+                        logger.error(f"信号処理エラー: {processing_error}")
+                        time.sleep(0.1)
+                
+                # TS出力統計表示
+                output_stats = ts_output_manager.get_manager_stats()
+                logger.info(f"TS出力統計: {output_stats['output_stats']['packets_output']}パケット出力")
+                logger.info(f"出力ビットレート: {output_stats['output_stats'].get('average_bitrate', 0):.0f}bps")
+                
+                ts_output_manager.stop_output()
+                logger.info("TS出力管理停止")
+                
+            except ImportError:
+                logger.error("TS出力モジュールが利用できません - ダミー出力を行います")
+                for _ in range(10):
+                    sys.stdout.buffer.write(dummy_ts_packet)
+                    sys.stdout.buffer.flush()
             
-            logger.info("信号処理・ISDB-T Mode3+ECC復調テスト完了")
+            except Exception as ts_error:
+                logger.error(f"TS出力処理エラー: {ts_error}")
+                logger.warning("ダミーTS出力にフォールバック")
+                for _ in range(10):
+                    sys.stdout.buffer.write(dummy_ts_packet)
+                    sys.stdout.buffer.flush()
+            
+            logger.info("MPEG-TS出力処理完了")
         
     except KeyboardInterrupt:
         logger.info("ユーザーによって中断されました")
