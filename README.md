@@ -74,6 +74,19 @@ python oneseg.py --list-devices
 
 ## 使用方法
 
+### デバイス動作確認
+
+```bash
+# RTL-SDRデバイスと信号処理パイプラインの動作確認
+python oneseg.py --test-device
+
+# 特定のチャンネルでテスト
+python oneseg.py --test-device -c 27
+
+# 特定のデバイスでテスト
+python oneseg.py --test-device -d 1
+```
+
 ### 基本的な受信・再生
 
 ```bash
