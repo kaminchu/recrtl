@@ -867,3 +867,118 @@ class ISDBDecoder:
         
         logger.info(f"ISDB-T Mode3処理完了: {symbol_count}シンボル処理, {len(oneseg_results)}個の有効なワンセグデータ")
         return oneseg_results
+    
+    def apply_error_correction(self, oneseg_bits: List[int], modulation: str = "QPSK") -> Tuple[List[int], dict]:
+        """
+        ワンセグビットデータにエラー訂正を適用
+        
+        Args:
+            oneseg_bits: ワンセグから復調されたビット列
+            modulation: 変調方式
+            
+        Returns:
+            Tuple[List[int], dict]: (エラー訂正後データ, 処理統計)
+        """
+        try:
+            from error_correction import ErrorCorrectionProcessor
+            
+            # ワンセグではQPSK、符号化率1/2が一般的
+            ecc_processor = ErrorCorrectionProcessor(
+                modulation=modulation,
+                code_rate="1/2"
+            )
+            
+            corrected_data, stats = ecc_processor.process(oneseg_bits)
+            
+            logger.debug(f"エラー訂正適用: {len(oneseg_bits)}ビット → {len(corrected_data)}バイト")
+            return corrected_data, stats
+            
+        except ImportError:
+            logger.warning("エラー訂正モジュールが利用できません")
+            return [], {}
+        except Exception as e:
+            logger.error(f"エラー訂正処理エラー: {e}")
+            return [], {}
+    
+    def process_oneseg_with_ecc(self, ofdm_symbol):
+        """
+        エラー訂正付きワンセグ処理
+        
+        Args:
+            ofdm_symbol: 時間領域OFDMシンボル
+            
+        Returns:
+            dict: エラー訂正を含む完全なワンセグ処理結果
+        """
+        # 基本的なワンセグ復調
+        basic_result = self.process_oneseg_symbol(ofdm_symbol)
+        
+        if not basic_result or 'demodulated_bits' not in basic_result:
+            return basic_result
+        
+        # エラー訂正適用
+        corrected_data, ecc_stats = self.apply_error_correction(
+            basic_result['demodulated_bits'],
+            basic_result['modulation']
+        )
+        
+        # 結果に統合
+        enhanced_result = basic_result.copy()
+        enhanced_result.update({
+            'corrected_data': corrected_data,
+            'corrected_bytes': len(corrected_data),
+            'error_correction_stats': ecc_stats,
+            'ecc_success': len(corrected_data) > 0
+        })
+        
+        logger.debug(f"エラー訂正付きワンセグ処理: {enhanced_result['bit_count']}ビット → {enhanced_result['corrected_bytes']}バイト")
+        return enhanced_result
+    
+    def process_isdb_mode3_with_ecc(self, samples):
+        """
+        エラー訂正付きISDB-T Mode3ストリーム処理
+        
+        Args:
+            samples: 連続I/Qサンプル
+            
+        Returns:
+            List: エラー訂正付きワンセグ処理結果のリスト
+        """
+        if len(samples) < self.SYMBOL_SIZE:
+            logger.warning("ISDB-T Mode3+ECC処理: サンプル数不足")
+            return []
+        
+        ecc_results = []
+        current_pos = 0
+        
+        # シンボル同期
+        sync_offset, sync_confidence = self.symbol_synchronization(samples[current_pos:])
+        
+        if sync_confidence < 0.3:
+            logger.warning(f"ISDB-T Mode3+ECC同期失敗: 信頼度={sync_confidence:.3f}")
+            return []
+        
+        current_pos += sync_offset
+        logger.info(f"ISDB-T Mode3+ECC同期成功: オフセット={sync_offset}, 信頼度={sync_confidence:.3f}")
+        
+        # 連続するシンボルを処理
+        symbol_count = 0
+        total_corrected_bytes = 0
+        
+        while current_pos + self.SYMBOL_SIZE <= len(samples):
+            # 現在のシンボルを抽出
+            current_symbol = samples[current_pos:current_pos + self.SYMBOL_SIZE]
+            
+            # エラー訂正付きワンセグ処理実行
+            ecc_result = self.process_oneseg_with_ecc(current_symbol)
+            
+            if ecc_result and ecc_result.get('ecc_success', False):
+                ecc_results.append(ecc_result)
+                total_corrected_bytes += ecc_result.get('corrected_bytes', 0)
+                symbol_count += 1
+            
+            # 次のシンボルに進む
+            current_pos += self.SYMBOL_SIZE
+        
+        logger.info(f"ISDB-T Mode3+ECC処理完了: {symbol_count}シンボル処理, 合計{total_corrected_bytes}バイト訂正")
+        return ecc_results

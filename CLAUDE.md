@@ -64,9 +64,9 @@ python -m pytest tests/ -v
 This project uses a structured task management approach:
 
 ### Core Documents
-- **SPEC.md**: Technical specifications and requirements (Japanese)
-- **TASK.md**: Detailed task breakdown with technical implementation details (Japanese)  
-- **TODO.md**: Progress tracking with checkboxes and status updates (Japanese)
+- **SPEC.md**: Technical specifications and requirements (in Japanese)
+- **TASK.md**: Detailed task breakdown with technical implementation details (in Japanese)  
+- **TODO.md**: Progress tracking with checkboxes and status updates (in Japanese)
 
 ### Development Workflow
 1. **Follow TODO.md**: Check current task status and next priorities
@@ -178,3 +178,8 @@ Use `python run_tests.py` to execute all tests with organized output and timing 
 3. **Dependencies**: Gracefully handle missing optional dependencies (numpy, scipy)
 4. **Timeouts**: System tests include timeout handling for long-running operations
 5. **Coverage**: Aim for comprehensive coverage of signal processing algorithms
+
+## Development Guidelines
+
+### Workflow Memories
+- タスク完了時には必ずcommitすること

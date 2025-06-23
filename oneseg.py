@@ -366,24 +366,46 @@ def main():
                         logger.info("ISDB-T Mode3復調テスト実行中...")
                         
                         try:
-                            # Mode3復調実行（ワンセグ抽出）
-                            oneseg_results = isdb_decoder.process_isdb_mode3_stream(processed_samples)
+                            # Mode3復調実行（エラー訂正付き）
+                            ecc_results = isdb_decoder.process_isdb_mode3_with_ecc(processed_samples)
                             
-                            if oneseg_results:
-                                logger.info(f"ISDB-T Mode3復調成功: {len(oneseg_results)}シンボル復調")
+                            if ecc_results:
+                                logger.info(f"ISDB-T Mode3+ECC復調成功: {len(ecc_results)}シンボル復調")
                                 
                                 # 復調結果統計
                                 total_bits = 0
-                                for i, result in enumerate(oneseg_results):
+                                total_corrected_bytes = 0
+                                ecc_success_count = 0
+                                
+                                for i, result in enumerate(ecc_results):
                                     logger.info(f"シンボル{i}: セグメント{result['segment_id']} ({result['modulation']})")
                                     logger.info(f"  キャリア数: {result['carrier_count']}, ビット数: {result['bit_count']}")
                                     logger.info(f"  シンボルパワー: {result['symbol_power']:.6f}")
+                                    
+                                    # エラー訂正結果
+                                    if result.get('ecc_success', False):
+                                        ecc_success_count += 1
+                                        corrected_bytes = result.get('corrected_bytes', 0)
+                                        total_corrected_bytes += corrected_bytes
+                                        logger.info(f"  ✓ エラー訂正成功: {corrected_bytes}バイト")
+                                        
+                                        # エラー訂正統計
+                                        ecc_stats = result.get('error_correction_stats', {})
+                                        if ecc_stats:
+                                            logger.debug(f"    ビットデインターリーブ: {'成功' if ecc_stats.get('bit_deinterleave_success') else '失敗'}")
+                                            logger.debug(f"    畳み込み復号: {'成功' if ecc_stats.get('convolutional_decode_success') else '失敗'}")
+                                            logger.debug(f"    RS復号: {'成功' if ecc_stats.get('rs_decode_success') else '失敗'}")
+                                    else:
+                                        logger.warning(f"  ✗ エラー訂正失敗")
+                                    
                                     total_bits += result['bit_count']
                                 
                                 logger.info(f"✓ 合計復調ビット数: {total_bits}")
-                                logger.info("✓ ISDB-T Mode3復調テスト完了")
+                                logger.info(f"✓ 合計エラー訂正バイト数: {total_corrected_bytes}")
+                                logger.info(f"✓ エラー訂正成功率: {ecc_success_count}/{len(ecc_results)} ({100*ecc_success_count/len(ecc_results):.1f}%)")
+                                logger.info("✓ ISDB-T Mode3+ECC復調テスト完了")
                             else:
-                                logger.warning("ISDB-T Mode3復調失敗: シンボル同期エラーまたはサンプル不足")
+                                logger.warning("ISDB-T Mode3+ECC復調失敗: シンボル同期エラーまたはサンプル不足")
                                 
                         except Exception as e:
                             logger.error(f"ISDB-T Mode3復調エラー: {e}")
@@ -396,14 +418,14 @@ def main():
                 else:
                     logger.error("サンプル読み取り失敗")
             
-            # 現在はダミーTS出力（エラー訂正・TS生成未実装）
-            logger.warning("注意: エラー訂正・TS生成は未実装のため、ダミーTS出力を行います")
+            # 現在はダミーTS出力（TS解析・生成未実装）
+            logger.warning("注意: トランスポートストリーム解析・生成は未実装のため、ダミーTS出力を行います")
             
             for _ in range(10):
                 sys.stdout.buffer.write(dummy_ts_packet)
                 sys.stdout.buffer.flush()
             
-            logger.info("信号処理・ISDB-T Mode3復調テスト完了")
+            logger.info("信号処理・ISDB-T Mode3+ECC復調テスト完了")
         
     except KeyboardInterrupt:
         logger.info("ユーザーによって中断されました")
