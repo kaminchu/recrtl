@@ -11,6 +11,12 @@ import logging
 import sys
 import os
 
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+
 # プロジェクトのsrcディレクトリをPythonパスに追加
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
@@ -43,10 +49,17 @@ def create_channel_map():
 def list_rtl_devices():
     """利用可能なRTL-SDRデバイスを一覧表示"""
     try:
-        # 将来的にRTL-SDRライブラリで実装
+        from rtl_interface import RTLInterface
+        
         print("RTL-SDRデバイス一覧:", file=sys.stderr)
-        print("  Device 0: RTL2832U (仮想デバイス)", file=sys.stderr)
-        print("  実際のデバイス検出は今後実装予定", file=sys.stderr)
+        devices = RTLInterface.list_devices()
+        
+        if devices:
+            for device_id, description in devices:
+                print(f"  Device {device_id}: {description}", file=sys.stderr)
+        else:
+            print("  利用可能なデバイスが見つかりませんでした", file=sys.stderr)
+        
         return True
     except Exception as e:
         print(f"エラー: デバイス検出に失敗しました - {e}", file=sys.stderr)
@@ -141,30 +154,58 @@ def main():
     else:
         logger.info("RF gain: 自動")
     
-    # 現在は基本実装のため、ダミーデータを出力
+    # RTL-SDRインターフェースを使用した受信処理
     logger.info("ワンセグ受信を開始します...")
-    logger.warning("注意: 現在は基本実装のため、実際の受信は未実装です")
     
     try:
-        # 将来的にここで実際の受信処理を行う
-        # 現在はプレースホルダー
-        logger.info("受信処理を初期化中...")
-        logger.info("信号処理パイプラインを構築中...")
-        logger.info("MPEG-TS出力準備完了")
+        from rtl_interface import RTLInterface
         
-        # ダミーのTSパケットヘッダー（188バイト、同期バイト0x47で開始）
-        dummy_ts_packet = b'\x47' + b'\x00' * 187
-        
-        logger.info("標準出力にMPEG-TSストリームを出力中...")
-        logger.info("終了するには Ctrl+C を押してください")
-        
-        # 実際の実装では無限ループでリアルタイム処理
-        # 現在はダミーパケットを少数出力して終了
-        for _ in range(10):
-            sys.stdout.buffer.write(dummy_ts_packet)
-            sys.stdout.buffer.flush()
-        
-        logger.info("ダミー出力完了（実装完了後は連続出力になります）")
+        # RTL-SDRデバイスを初期化
+        logger.info("RTL-SDRデバイスを初期化中...")
+        with RTLInterface(device_id=args.device) as rtl:
+            
+            # デバイス設定
+            logger.info("デバイス設定を適用中...")
+            rtl.set_frequency(frequency_hz)
+            rtl.set_sample_rate(args.sample_rate)
+            rtl.set_gain(args.gain)
+            
+            # デバイス情報を表示
+            if args.verbose:
+                device_info = rtl.get_device_info()
+                logger.debug(f"デバイス情報: {device_info}")
+            
+            logger.info("信号処理パイプラインを構築中...")
+            logger.info("MPEG-TS出力準備完了")
+            
+            # ダミーのTSパケットヘッダー（188バイト、同期バイト0x47で開始）
+            dummy_ts_packet = b'\x47' + b'\x00' * 187
+            
+            logger.info("標準出力にMPEG-TSストリームを出力中...")
+            logger.info("終了するには Ctrl+C を押してください")
+            
+            # 実際の実装では無限ループでリアルタイム処理
+            # 現在はダミーパケットを少数出力して終了
+            logger.warning("注意: 信号処理は未実装のため、ダミーTS出力を行います")
+            
+            # サンプル読み取りテスト
+            if args.verbose:
+                logger.info("I/Qサンプル読み取りテスト...")
+                samples = rtl.read_samples(1024)
+                if samples is not None:
+                    if NUMPY_AVAILABLE:
+                        avg_power = np.mean(np.abs(samples)**2)
+                        logger.info(f"サンプル読み取り成功: {len(samples)}個 (平均パワー: {avg_power:.6f})")
+                    else:
+                        logger.info(f"サンプル読み取り成功: {len(samples)}個")
+                else:
+                    logger.error("サンプル読み取り失敗")
+            
+            for _ in range(10):
+                sys.stdout.buffer.write(dummy_ts_packet)
+                sys.stdout.buffer.flush()
+            
+            logger.info("ダミー出力完了（実装完了後は連続出力になります）")
         
     except KeyboardInterrupt:
         logger.info("ユーザーによって中断されました")
