@@ -17,6 +17,7 @@ try:
     NUMPY_AVAILABLE = True
 except ImportError:
     NUMPY_AVAILABLE = False
+    np = None
 
 # プロジェクトのsrcディレクトリをPythonパスに追加
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -470,6 +471,8 @@ def main():
                 logger.info("連続信号処理・リアルタイムTS出力中...")
                 logger.info("終了するには Ctrl+C を押してください")
                 
+                # 必要サンプル数を定義（OFDMシンボル複数分）
+                required_samples = isdb_decoder.SYMBOL_SIZE * 3  # 3シンボル分
                 packet_count = 0
                 while True:
                     try:
