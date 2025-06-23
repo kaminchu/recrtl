@@ -287,6 +287,50 @@ class RTLInterface:
         return info
     
     @staticmethod
+    def _check_hardware_presence() -> bool:
+        """
+        実際のRTL-SDRハードウェアの存在を確認
+        
+        Returns:
+            bool: ハードウェアが検出された場合True
+        """
+        try:
+            import subprocess
+            import re
+            
+            # lsusbコマンドでRTL2832Uデバイスを検索
+            result = subprocess.run(['lsusb'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                # RTL2832U関連のUSBデバイスを検索
+                rtl_patterns = [
+                    r'0bda:2832',  # Realtek RTL2832U
+                    r'0bda:2838',  # Realtek RTL2838
+                    r'RTL2832U',
+                    r'RTL-SDR'
+                ]
+                
+                for pattern in rtl_patterns:
+                    if re.search(pattern, result.stdout, re.IGNORECASE):
+                        logger.debug(f"RTL-SDRハードウェア検出: {pattern}")
+                        return True
+            
+            # /dev/swradio* デバイスファイルの存在確認
+            import glob
+            swradio_devices = glob.glob('/dev/swradio*')
+            if swradio_devices:
+                logger.debug(f"Software Radio デバイス検出: {swradio_devices}")
+                return True
+                
+            return False
+            
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+            logger.debug("lsusbコマンドでのデバイス検索に失敗")
+            return False
+        except Exception as e:
+            logger.debug(f"ハードウェア検出エラー: {e}")
+            return False
+
+    @staticmethod
     def list_devices() -> List[Tuple[int, str]]:
         """
         利用可能なRTL-SDRデバイスを一覧表示
@@ -298,8 +342,13 @@ class RTLInterface:
         
         if not RTLSDR_AVAILABLE:
             logger.warning("pyrtlsdrライブラリが利用できません")
-            # 開発モード用のダミーデバイス
-            devices.append((0, "RTL2832U (開発モード・シミュレーション)"))
+            # まず実際のハードウェア検出を試行
+            if RTLInterface._check_hardware_presence():
+                logger.info("RTL-SDRハードウェアが検出されましたが、pyrtlsdrライブラリが不足しています")
+                devices.append((0, "RTL2832U (ドライバ不足・要pyrtlsdr)"))
+            else:
+                logger.info("RTL-SDRハードウェアが検出されません")
+                # ハードウェアなしの場合は空のリストを返す
             return devices
         
         try:

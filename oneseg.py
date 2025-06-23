@@ -256,7 +256,7 @@ def test_device_functionality(device_id: int = 0, test_frequency: float = 473.14
                     
                     # 実際の信号処理テスト
                     test_samples = rtl.read_samples(8192)
-                    if test_samples:
+                    if test_samples is not None and len(test_samples) > 0:
                         processed_samples = isdb_decoder.process_samples(test_samples)
                         print(f"  ✓ 信号前処理: {len(test_samples)} → {len(processed_samples)} サンプル", file=sys.stderr)
                         

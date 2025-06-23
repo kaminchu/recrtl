@@ -212,19 +212,20 @@ class ISDBDecoder:
         
         for i in range(len(samples)):
             # 現在サンプルのパワー
-            sample_power = abs(samples[i]) ** 2
+            sample_power = float(abs(samples[i]) ** 2)
             
             # パワー推定値更新（指数移動平均）
             self._agc_power_estimate = (1 - self.agc_bandwidth) * self._agc_power_estimate + \
                                       self.agc_bandwidth * sample_power
             
             # AGCゲイン計算
-            if self._agc_power_estimate > 1e-10:  # ゼロ除算回避
+            if float(self._agc_power_estimate) > 1e-10:  # ゼロ除算回避
                 target_power = self.agc_reference ** 2
-                self._agc_gain = np.sqrt(target_power / self._agc_power_estimate)
+                gain_value = np.sqrt(target_power / self._agc_power_estimate)
+                self._agc_gain = float(gain_value)
             
             # ゲイン制限（オーバーフローを防ぐ）
-            self._agc_gain = np.clip(self._agc_gain, 0.01, 100.0)
+            self._agc_gain = max(0.01, min(100.0, self._agc_gain))
             
             # AGC適用
             output[i] = samples[i] * self._agc_gain
@@ -282,7 +283,15 @@ class ISDBDecoder:
             return samples
         
         # 入力検証
-        if not any(isinstance(x, complex) for x in samples[:min(10, len(samples))]):
+        sample_check = samples[:min(10, len(samples))]
+        if NUMPY_AVAILABLE and hasattr(samples, 'dtype'):
+            # numpy配列の場合
+            is_complex = np.iscomplexobj(samples)
+        else:
+            # Python list の場合
+            is_complex = any(isinstance(x, complex) for x in sample_check)
+        
+        if bool(is_complex) is False:
             logger.warning("入力サンプルが複素数ではありません")
             return samples
         
