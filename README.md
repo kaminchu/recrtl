@@ -23,16 +23,53 @@ RTL2832ベースの安価なUSBチューナーを使用して、日本のワン�
 
 ## インストール
 
+### 必要な依存関係
+```bash
+# Ubuntu/Debian
+sudo apt-get install python3 python3-pip librtlsdr-dev
+
+# CentOS/RHEL
+sudo yum install python3 python3-pip rtl-sdr-devel
+
+# macOS (Homebrew)
+brew install python3 rtl-sdr
+```
+
+### プロジェクトセットアップ
 ```bash
 # リポジトリをクローン
 git clone https://github.com/example/oneseg-cli.git
 cd oneseg-cli
 
-# 依存関係をインストール
+# Pythonパッケージのインストール
 pip install -r requirements.txt
 
-# 開発モードでインストール
+# 開発モードでインストール（オプション）
 pip install -e .
+```
+
+### 開発環境のセットアップ
+
+#### 方法1: 環境設定スクリプト使用（推奨）
+```bash
+# プロジェクトディレクトリで実行
+source env.sh
+
+# 以降、通常通り実行可能
+python oneseg.py --list-devices
+```
+
+#### 方法2: 実行ラッパースクリプト使用
+```bash
+# 環境設定済みのラッパースクリプトを使用
+python run_oneseg.py --list-devices
+python run_oneseg.py -c 13 | ffplay -
+```
+
+#### 方法3: 手動でPYTHONPATH設定
+```bash
+export PYTHONPATH="$(pwd)/src:$PYTHONPATH"
+python oneseg.py --list-devices
 ```
 
 ## 使用方法
