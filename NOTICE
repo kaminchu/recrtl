@@ -1,0 +1,15 @@
+recrtl is licensed under GPL-3.0-or-later.
+
+The ISDB-T Mode 3 frequency permutation is a standard-defined table
+(ARIB STD-B31), cross-checked against git-artes/gr-isdbt:
+https://github.com/git-artes/gr-isdbt
+Copyright 2015-2021 Federico La Rocca, Pablo Belzarena, Gabriel Gomez Sena,
+Pablo Flores Guridi, Victor Gonzalez Barbone; Universidad de la Republica,
+Uruguay. The reference implementation is GPL-3.0-or-later.
+
+The DSP implementation is written in Rust. No GNU Radio or gr-isdbt code is
+built, linked, loaded, or invoked. Rust crates and librtlsdr retain their
+respective licenses.
+
+Recording CLI conventions were checked against dogeel/recdvb:
+https://github.com/dogeel/recdvb (recpt1.c and recpt1core.c).
