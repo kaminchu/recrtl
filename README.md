@@ -1,183 +1,124 @@
-# ワンセグCLIツール
+# recrtl
 
-RTL2832ベースの安価なUSBチューナーを使用して、日本のワンセグ（1seg）デジタルテレビ放送を受信し、標準出力にMPEG-TSストリームを出力するCLIツール。
+RTL-SDRで日本の地上デジタル放送のワンセグを受信し、MPEG-TSを記録するRust製コマンドです。
+録画CLIはrecdvbの `channel rectime destfile` 形式に合わせています。
 
-## 特徴
+受信処理はRustで実装し、Python・GNU Radio・gr-isdbtは不要です。
+実機のUSB制御に限り `librtlsdr` を実行時に読み込みます。
+保存IQの復号には `librtlsdr` も不要です。現在の実行対象はLinuxです。
 
-- 安価なRTL-SDRドングルでワンセグ放送を受信
-- 標準出力への動画ストリーム出力により、ffmpegや動画プレイヤーとのパイプライン連携を実現
-- リアルタイム視聴、録画、配信などの用途に対応
-- Python実装による柔軟性とカスタマイズ性
+## ビルド
 
-## 要件
+Rust/Cargoでビルドします。検証済みツールチェーンはRust 1.98.1です。
 
-### ハードウェア
-- RTL2832U + R820T/R828D チューナー（一般的な安価SDRドングル）
-- USB 2.0/3.0接続
-- 適切なアンテナ（UHF対応）
-
-### ソフトウェア
-- Python 3.8以上
-- RTL-SDRドライバ
-- Linux環境（推奨）
-
-## インストール
-
-### 必要な依存関係
-```bash
-# Ubuntu/Debian
-sudo apt-get install python3 python3-pip librtlsdr-dev
-
-# CentOS/RHEL
-sudo yum install python3 python3-pip rtl-sdr-devel
-
-# macOS (Homebrew)
-brew install python3 rtl-sdr
+```sh
+cargo build --release --locked
+cargo install --path . --locked
 ```
 
-### プロジェクトセットアップ
-```bash
-# リポジトリをクローン
-git clone https://github.com/example/oneseg-cli.git
-cd oneseg-cli
+実機受信にはディストリビューションの `librtlsdr` とUSBデバイスへのアクセス権が必要です。
 
-# Pythonパッケージのインストール
-pip install -r requirements.txt
+## 録画
 
-# 開発モードでインストール（オプション）
-pip install -e .
+```sh
+recrtl [OPTIONS] CHANNEL RECTIME DESTFILE
+
+# 物理19chを60秒間録画
+recrtl --dev 0 --gain 38.6 19 60 recording.ts
+
+# 終了シグナルまで録画し、TSを標準出力へ送る
+recrtl 19 - - > recording.ts
+
+# SIDを選択
+recrtl --sid 32152 19 1h30m recording.ts
+
+# 標準出力を再生ソフトへ渡す
+recrtl 19 - - | ffplay -i pipe:0
 ```
 
-### 開発環境のセットアップ
+- `CHANNEL`: UHF物理チャンネル13〜62。BS/CSやフルセグは受信しません。
+- `RECTIME`: 秒数、`H:M`、`H:M:S`、`1h30m`、`1h2m3s`、または無期限の `-`。
+  recdvbと同じく `1:30` は1時間30分です。実機では受信開始からの経過時間で終了します。
+- `DESTFILE`: 新規ファイル、または標準出力の `-`。既存ファイルへの上書きはエラーにします。
+- `--dev N` / `-d N`: RTL-SDRのデバイス番号（既定値0）。
+- `--sid LIST` / `-i LIST`: SIDのカンマ区切り、`all`（既定値）、`hd` / `sd1`、`sd2`、`sd3`、
+  `1seg`、`epg`、`epg1seg`。数値と別名の混在も可能です。
+  `1seg` はPMT PID `0x1fc8` の番組を選択します。存在しないSIDではTSを出力せず、
+  有期限録画・ファイル終端でエラーにします。
+- `--strip` / `-s`: nullパケットを除外。
+- `--help` / `-h`、`--version` / `-v`、`--list` / `-l`: ヘルプ、バージョン、物理チャンネル一覧。
 
-#### 方法1: 環境設定スクリプト使用（推奨）
-```bash
-# プロジェクトディレクトリで実行
-source env.sh
+TS以外の診断はstderrへ出力します。SIGINT / SIGTERMで停止でき、出力先のパイプが
+詰まっていても停止できます。パイプの読み手が終了した場合は正常終了します。
+実機受信では、プレーヤーが読み取りを一時停止してもIQの受信・復号を続けるよう、
+未送信のTSを最大4 MiB保持します。読み取りが再開すれば順番どおり送信し、
+上限に達した場合は `TS output stalled` として終了します。保存IQの再生は読み手の速度に合わせます。
+B25、LNB制御、HTTP/UDP配信のオプションは対応範囲外で、指定するとエラーになります。
 
-# 以降、通常通り実行可能
-python oneseg.py --list-devices
+## 受信確認用オプション
+
+```sh
+recrtl --list-devices
+recrtl --list-regions
+recrtl --list-channels niigata
+
+# 2.048 MS/s unsigned 8-bit I,Q交互の保存データを復号
+recrtl --iq-file capture.u8iq 19 - recording.ts
+
+# 有限IQの記録端を整形して、映像・音声の厳密な検証に使う
+recrtl --iq-file capture.u8iq --trim 19 - trimmed.ts
+ffmpeg -v error -xerror -i trimmed.ts -map 0:v:0 -map 0:a:0 -f null -
 ```
 
-#### 方法2: 実行ラッパースクリプト使用
-```bash
-# 環境設定済みのラッパースクリプトを使用
-python run_oneseg.py --list-devices
-python run_oneseg.py -c 13 | ffplay -
+`--gain DB` は固定ゲイン（省略時は自動）、`--frequency MHz` は中心周波数、
+`--ppm N` はチューナーの周波数補正です。
+保存IQでは `RECTIME` は入力サンプル数に換算され、実時間での待機はしません。
+`-` はファイル終端まで処理します。通常は5〜10秒以上のIQを用意してください。
+
+`--trim` は保存IQ専用で、全TSをメモリに保持してから不完全なPES・AACフレームと
+最初のSPS/PPS/IDR以前の映像を除外します。再エンコードはしません。
+通常の録画はTSを逐次出力するため、記録端の不完全フレームを含み得ます。
+
+## 受信方式
+
+現在の対応範囲はMode 3、GI 1/8、部分受信Layer A、QPSK、1セグメントです。
+TMCCから符号化率1/2・2/3・3/4・5/6・7/8と時間インターリーブ長0・1・2・4を選びます。
+他のモード・GI・変調方式は未対応です。
+
+処理経路は以下の通りです。
+
+```text
+RTL-SDR / IQ file (2.048 MS/s u8 IQ)
+ → 125/252 FIR resampling
+ → CP synchronization / frequency and sampling-clock tracking
+ → FFT / TMCC parity validation / scattered-pilot equalization
+ → frequency and time deinterleaving / QPSK / bit deinterleaving
+ → depuncturing / soft-decision Viterbi
+ → byte deinterleaving / energy descrambling / RS(204,188)
+ → PMT validation / PAT insertion / service filtering
+ → 188-byte MPEG-TS
 ```
 
-#### 方法3: 手動でPYTHONPATH設定
-```bash
-export PYTHONPATH="$(pwd)/src:$PYTHONPATH"
-python oneseg.py --list-devices
+同期を失った場合は同期・FEC・番組情報をリセットして再取得します。
+無信号や復号失敗からダミーTSは生成しません。
+PATは部分受信PMTから生成し、ローカル再生用のtransport_stream_id=1を使用します。
+放送局一覧は旧実装のデータを `data/stations.json` に保存したもので、最新の割当を保証するものではありません。
+
+## テスト
+
+```sh
+cargo test --locked
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+
+# 実IQを使う受け入れテスト（ffmpegとffprobeが必要）
+RECRTL_TEST_IQ=/path/to/capture.u8iq \
+  cargo test --release --test recorded -- --ignored --nocapture
 ```
 
-## 使用方法
+通常のテストは受信機・Python・GNU Radioなしで実行できます。
+実IQテストはTS同期、H.264/AACのフレーム数、ffmpegによる厳密な復号を検証します。
+実機と実IQではMode 3・GI 1/8・QPSK・符号化率2/3・時間インターリーブ長4を検証しています。
+他の符号化率はViterbiの符号化・復号テストで確認しています。
 
-### デバイス動作確認
-
-```bash
-# RTL-SDRデバイスと信号処理パイプラインの動作確認
-python oneseg.py --test-device
-
-# 特定のチャンネルでテスト
-python oneseg.py --test-device -c 27
-
-# 特定のデバイスでテスト
-python oneseg.py --test-device -d 1
-```
-
-### 基本的な受信・再生
-
-```bash
-# チャンネル13を受信してffplayで再生
-python oneseg.py -c 13 | ffplay -
-
-# NHK総合（東京）を受信してVLCで再生
-python oneseg.py -c 27 | vlc -
-
-# 周波数を直接指定
-python oneseg.py -f 473.142857 | ffplay -
-```
-
-### 録画・保存
-
-```bash
-# MP4ファイルに保存
-python oneseg.py -c 13 | ffmpeg -i - -c copy output.mp4
-
-# 10分間録画
-python oneseg.py -c 13 | timeout 600 ffmpeg -i - -c copy recording.ts
-```
-
-### コマンドライン引数
-
-| 引数 | 説明 | デフォルト |
-|------|------|-----------|
-| `-c, --channel` | チャンネル番号（13-62ch） | 13 |
-| `-f, --frequency` | 周波数直接指定（MHz） | - |
-| `-g, --gain` | RF gain（0-50dB） | 自動 |
-| `-s, --sample-rate` | サンプリングレート（Hz） | 2048000 |
-| `-d, --device` | RTL-SDRデバイスID | 0 |
-| `-v, --verbose` | 詳細ログ出力 | False |
-| `--list-devices` | 利用可能デバイス一覧 | - |
-
-## 技術仕様
-
-### ISDB-T（日本の地上デジタル放送）
-- 変調方式: OFDM
-- Mode 3: 13セグメント構成
-- ワンセグ: 中央セグメント（セグメント0）
-- 帯域幅: 6MHz
-
-### ワンセグ仕様
-- 映像: H.264/AVC（解像度320x240、フレームレート15fps）
-- 音声: AAC-LC（48kHz、モノラル/ステレオ）
-- 多重化: MPEG-2 Transport Stream
-
-## 開発
-
-### テスト実行
-
-```bash
-# 全テスト実行
-python -m pytest tests/
-
-# カバレッジ付きテスト
-python -m pytest tests/ --cov=src
-```
-
-### プロジェクト構造
-
-```
-oneseg/
-├── README.md            # 本ファイル
-├── requirements.txt     # Python依存関係
-├── setup.py            # パッケージ設定
-├── oneseg.py           # メインCLIスクリプト
-├── src/                # コアライブラリ
-│   ├── rtl_interface.py # RTL-SDR制御
-│   ├── isdb_decoder.py  # ISDB-T復調
-│   ├── oneseg_parser.py # ワンセグ解析
-│   └── ts_output.py     # MPEG-TS出力
-└── tests/              # テストスイート
-```
-
-## 制限事項
-
-- リアルタイム処理のため、CPU性能に依存
-- RTL-SDRドングルの個体差による受信感度の違い
-- アンテナ・受信環境による信号品質の影響
-- 著作権保護されたコンテンツの取り扱い制限
-
-## ライセンス
-
-GPL v3 - RTL-SDRドライバとの互換性のため
-
-## 貢献
-
-プルリクエストやイシューの報告を歓迎します。
-
-## 免責事項
-
-本ソフトウェアは教育・研究目的で開発されています。放送法その他の法規制を遵守してご利用ください。
+ライセンスはGPL-3.0-or-laterです。参照資料・帰属は `NOTICE` を参照してください。
