@@ -7,6 +7,35 @@ RTL-SDRで日本の地上デジタル放送のワンセグを受信し、MPEG-TS
 実機のUSB制御に限り `librtlsdr` を実行時に読み込みます。
 保存IQの復号には `librtlsdr` も不要です。現在の実行対象はLinuxです。
 
+## 依存パッケージのインストール
+
+Debian／Ubuntu／Raspberry Pi OSなどのaptを使う環境では、次のように準備します。
+
+```sh
+sudo apt update
+# ビルド用ツールとRustのインストールに使うツール
+sudo apt install build-essential curl ca-certificates
+# 実機受信用ライブラリ、udevルール、接続確認用のrtl_test
+sudo apt install rtl-sdr
+```
+
+`rtl-sdr` の依存関係として、そのOSに対応する `librtlsdr` もインストールされます。
+保存IQの復号だけなら `rtl-sdr` は不要です。Rustの依存クレートはビルド時にCargoが取得します。
+
+Rust/Cargoが未導入の場合は、[公式のrustup手順](https://doc.rust-lang.org/book/ch01-01-installation.html)でインストールします。
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+. "$HOME/.cargo/env"
+```
+
+再生や実IQの受け入れテストには、追加で `ffmpeg`（`ffplay`・`ffprobe`を含む）をインストールします。
+録画だけなら不要です。
+
+```sh
+sudo apt install ffmpeg
+```
+
 ## ビルド
 
 Rust/Cargoでビルドします。検証済みツールチェーンはRust 1.98.1です。
@@ -16,7 +45,43 @@ cargo build --release --locked
 cargo install --path . --locked
 ```
 
-実機受信にはディストリビューションの `librtlsdr` とUSBデバイスへのアクセス権が必要です。
+## USBデバイスへのアクセス権
+
+一般ユーザーで実機受信するには、USBデバイスへのアクセス権が必要です。
+Debian／Ubuntu系のパッケージに含まれるudevルールは、対応デバイスへのアクセスを
+`plugdev` グループに許可します（[パッケージの説明](https://github.com/osmocom/rtl-sdr/blob/master/debian/README.Debian)）。
+受信に使うユーザーで次を実行します。
+
+```sh
+sudo groupadd -f plugdev
+sudo usermod -aG plugdev "$(id -un)"
+sudo udevadm control --reload-rules
+```
+
+その後、**ログアウトしてログインし直し**（SSHなら再接続）、RTL-SDRをUSBから抜き差しします。
+`id -nG` に `plugdev` が含まれることを確認し、`sudo` を付けずに接続を確認します。
+
+```sh
+id -nG
+rtl_test -s 2048000
+# サンプルの読み取りを確認したらCtrl+Cで終了
+recrtl --list-devices
+```
+
+`rtl_test` を終了してから `recrtl` を起動してください。同じ受信機を同時には使えません。
+`recrtl --list-devices` は列挙だけなので、実際に開けるかどうかは `rtl_test` で確認します。
+
+権限エラーが続く場合は、`/usr/lib/udev/rules.d/` または `/lib/udev/rules.d/` の
+`60-librtlsdr*.rules` に受信機のUSB IDが含まれているか確認してください。
+
+`Kernel driver is active` などで開けない場合は、他の受信ソフトを終了し、
+DVB用カーネルドライバーとの競合を確認します。競合している場合のみ、次の設定を追加して再起動します。
+この設定は同じドライバーを使う機器のDVB受信にも影響します。
+
+```sh
+echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/recrtl-rtl-sdr.conf
+sudo reboot
+```
 
 ## 録画
 
