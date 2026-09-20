@@ -120,6 +120,28 @@ TS以外の診断はstderrへ出力します。SIGINT / SIGTERMで停止でき�
 上限に達した場合は `TS output stalled` として終了します。保存IQの再生は読み手の速度に合わせます。
 B25、LNB制御、HTTP/UDP配信のオプションは対応範囲外で、指定するとエラーになります。
 
+## Mirakurunで使う場合
+
+RTL-SDRを1台使う場合の `tuners.yml` の記述例です。
+設定ファイルの場所は[Mirakurunの設定ドキュメント](https://github.com/Chinachu/Mirakurun/blob/master/doc/Configuration.ja.md)を参照してください。
+
+```yaml
+- name: RTL-SDR-0
+  types:
+    - GR
+  command: recrtl --dev 0 <channel> - -
+  isDisabled: false
+```
+
+`<channel>` はMirakurunが `channels.yml` の物理チャンネル番号に置き換えます。
+末尾の `- -` は無期限の受信とTSの標準出力を指定します。受信対象は地上波のワンセグのみです。
+ゲインを固定する場合は、`--dev 0` の後ろに `--gain 38.6` などを追加します。
+
+Mirakurunの実行ユーザーから `recrtl` を起動できるようにしてください。
+PATHに含まれない場合は、`command` の `recrtl` を実際の実行ファイルの絶対パスに置き換えます。
+同じ実行ユーザーにUSBデバイスへのアクセス権も必要です。
+Dockerで動かす場合は、コンテナ内に `recrtl` と `librtlsdr` を用意し、USBデバイスを渡してください。
+
 ## 受信確認用オプション
 
 ```sh
