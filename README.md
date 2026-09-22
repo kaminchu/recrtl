@@ -111,6 +111,10 @@ recrtl 19 - - | ffplay -i pipe:0
   `1seg` はPMT PID `0x1fc8` の番組を選択します。存在しないSIDではTSを出力せず、
   有期限録画・ファイル終端でエラーにします。
 - `--strip` / `-s`: nullパケットを除外。
+- `--fullseg`: 映像・音声はワンセグのまま、MirakurunにフルセグのデジタルTVサービスとして
+  認識させます。SDTのサービス記述子の `service_type` を `0x01`（デジタルTV）に書き換えて
+  CRCを再計算するため、Mirakurunの `/api/services` の `type` が `0xC0` ではなく `1` になります。
+  サービスID（SID）は変更しません。
 - `--help` / `-h`、`--version` / `-v`、`--list` / `-l`: ヘルプ、バージョン、物理チャンネル一覧。
 
 TS以外の診断はstderrへ出力します。SIGINT / SIGTERMで停止でき、出力先のパイプが
@@ -136,6 +140,18 @@ RTL-SDRを1台使う場合の `tuners.yml` の記述例です。
 `<channel>` はMirakurunが `channels.yml` の物理チャンネル番号に置き換えます。
 末尾の `- -` は無期限の受信とTSの標準出力を指定します。受信対象は地上波のワンセグのみです。
 ゲインを固定する場合は、`--dev 0` の後ろに `--gain 38.6` などを追加します。
+
+ワンセグのサービスをフルセグのデジタルTVサービスとしてMirakurunに登録したい場合は、
+`command` に `--fullseg` を追加します。
+
+```yaml
+  command: recrtl --dev 0 --fullseg <channel> - -
+```
+
+`--fullseg` はSDTの `service_type` のみを `0x01` に書き換えるため、映像・音声はワンセグのままです
+（解像度はMirakurun上では `240p` のままです）。すでに登録済みのサービスの `type` を更新するには、
+Mirakurunのチャンネルスキャンを `refresh=true` で再実行してください。
+MirakurunはPATに含まれるサービスだけをSDTから登録するため、`--fullseg` を付けてもSIDは変わりません。
 
 Mirakurunの実行ユーザーから `recrtl` を起動できるようにしてください。
 PATHに含まれない場合は、`command` の `recrtl` を実際の実行ファイルの絶対パスに置き換えます。
@@ -220,7 +236,8 @@ RECRTL_TEST_IQ=/path/to/capture.u8iq \
 ```
 
 通常のテストは受信機・Python・GNU Radioなしで実行できます。
-Mirakurun向けには、PATのTS ID・NIT参照、EITのPID変換・分割セクションの結合・CRCを検証します。
+Mirakurun向けには、PATのTS ID・NIT参照、EITのPID変換・分割セクションの結合・CRC、
+`--fullseg` のSDT `service_type` 書き換えとCRC再計算を検証します。
 また、6局分の保存TSを使い、Mirakurun 4.1.3のTSFilter・EPG処理による局名・サービスID・
 現在／次の番組名・開始時刻・長さの取得をオフラインで確認しています。
 実IQテストはTS同期、H.264/AACのフレーム数、ffmpegによる厳密な復号を検証します。

@@ -54,6 +54,10 @@ pub struct Args {
     /// Remove null TS packets
     #[arg(long, short = 's')]
     pub strip: bool,
+    /// Report the one-seg service to Mirakurun as a full-seg digital TV service
+    /// (rewrites the SDT service_type to 0x01; the stream stays one-seg)
+    #[arg(long)]
+    pub fullseg: bool,
     /// Print receiver statistics on stderr
     #[arg(long)]
     pub verbose: bool,

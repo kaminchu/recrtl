@@ -97,6 +97,55 @@ impl Sections {
         }
     }
 }
+/// Rewrite every service descriptor in an SDT section to the digital TV
+/// service_type (0x01) and refresh the CRC. Other sections pass through.
+fn fullseg_sdt(section: &[u8]) -> Vec<u8> {
+    let mut s = section.to_vec();
+    if s.len() < 15 || s[0] != 0x42 {
+        return s;
+    }
+    let end = s.len() - 4;
+    let mut i = 11;
+    while i + 5 <= end {
+        let dlen = ((s[i + 3] as usize & 15) << 8) + s[i + 4] as usize;
+        let mut j = i + 5;
+        let stop = j + dlen;
+        if stop > end {
+            break;
+        }
+        while j + 2 <= stop {
+            let len = s[j + 1] as usize;
+            if j + 2 + len > stop {
+                break;
+            }
+            if s[j] == 0x48 && len >= 1 {
+                s[j + 2] = 0x01;
+            }
+            j += 2 + len;
+        }
+        i = stop;
+    }
+    let crc = crc32(&s[..end]);
+    s[end..].copy_from_slice(&crc.to_be_bytes());
+    s
+}
+/// Wrap a complete PSI/SI section in TS packets with its own continuity counter.
+fn emit_section(section: &[u8], id: u16, counter: &mut u8, out: &mut Vec<[u8; 188]>) {
+    let mut data = vec![0]; // pointer_field
+    data.extend_from_slice(section);
+    for (i, chunk) in data.chunks(184).enumerate() {
+        let mut p = [0xff; 188];
+        p[..4].copy_from_slice(&[
+            0x47,
+            if i == 0 { 0x40 } else { 0 } | (id >> 8) as u8,
+            id as u8,
+            0x10 | *counter,
+        ]);
+        p[4..4 + chunk.len()].copy_from_slice(chunk);
+        *counter = (*counter + 1) % 16;
+        out.push(p);
+    }
+}
 #[derive(Clone, Debug)]
 pub enum Selection {
     All,
@@ -176,11 +225,13 @@ pub struct Transport {
     version: u8,
     tsid: u16,
     eit_counter: u8,
+    sdt_counter: u8,
     strip: bool,
+    fullseg: bool,
     pub written: u64,
 }
 impl Transport {
-    pub fn new(selection: Selection, strip: bool) -> Self {
+    pub fn new(selection: Selection, strip: bool, fullseg: bool) -> Self {
         Self {
             sections: Sections::default(),
             programs: BTreeMap::new(),
@@ -190,7 +241,9 @@ impl Transport {
             version: 0,
             tsid: 1,
             eit_counter: 0,
+            sdt_counter: 0,
             strip,
+            fullseg,
             written: 0,
         }
     }
@@ -199,6 +252,7 @@ impl Transport {
             return vec![];
         }
         let id = pid(&p);
+        let mut sdt = vec![];
         if id == 0x11 {
             for s in self.sections.feed(&p) {
                 // Only the current actual-TS SDT identifies this transport.
@@ -209,6 +263,9 @@ impl Transport {
                         self.version = (self.version + 1) & 31;
                         self.count = 0;
                     }
+                }
+                if self.fullseg {
+                    sdt.push(s);
                 }
             }
         }
@@ -283,7 +340,13 @@ impl Transport {
             out.push(pat);
         }
         self.count += 1;
-        if id != 0x12 {
+        if id == 0x11 && self.fullseg {
+            // Rewrite the service_type of each SDT service to digital TV so
+            // Mirakurun reports the one-seg service as full-seg (type=0x01).
+            for section in &sdt {
+                emit_section(&fullseg_sdt(section), 0x11, &mut self.sdt_counter, &mut out);
+            }
+        } else if id != 0x12 {
             out.push(p);
         }
         if matches!(id, 0x12 | 0x27) {
@@ -383,7 +446,7 @@ mod tests {
     }
     #[test]
     fn mirakurun_scan_pat_matches_sdt_and_announces_nit() {
-        let mut t = Transport::new(Selection::All, false);
+        let mut t = Transport::new(Selection::All, false, false);
         t.feed(psi(0x1fc8, section()[..17].to_vec(), 0));
         let out = t.feed(sdt(0x42, true));
         assert_eq!(pid(&out[0]), 0, "PAT must precede the actual SDT");
@@ -408,7 +471,7 @@ mod tests {
             if p == sdt(0x42, true) {
                 p[187] ^= 1;
             }
-            let mut t = Transport::new(Selection::All, false);
+            let mut t = Transport::new(Selection::All, false, false);
             t.feed(p);
             let out = t.feed(psi(0x1fc8, section()[..17].to_vec(), 0));
             let pat = Sections::default().feed(&out[0]).pop().unwrap();
@@ -417,7 +480,7 @@ mod tests {
     }
     #[test]
     fn mirakurun_receives_one_seg_eit_on_standard_pid() {
-        let mut t = Transport::new(Selection::All, false);
+        let mut t = Transport::new(Selection::All, false, false);
         t.feed(psi(0x1fc8, section()[..17].to_vec(), 0));
         let eit = psi(
             0x27,
@@ -439,7 +502,7 @@ mod tests {
     }
     #[test]
     fn mirakurun_merges_split_eit_without_corrupting_sections() {
-        let mut t = Transport::new(Selection::All, false);
+        let mut t = Transport::new(Selection::All, false, false);
         t.feed(psi(0x1fc8, section()[..17].to_vec(), 0));
         // A long EIT section, with a native PID 0x12 section arriving midway.
         let mut s = vec![
@@ -502,7 +565,7 @@ mod tests {
         let mut s = vec![0];
         s.extend(section());
         let p = packet(&s, 0, true);
-        let mut t = Transport::new(Selection::parse("32152").unwrap(), false);
+        let mut t = Transport::new(Selection::parse("32152").unwrap(), false, false);
         let out = t.feed(p);
         assert_eq!(out.len(), 2);
         assert_eq!(pid(&out[0]), 0);
@@ -513,7 +576,7 @@ mod tests {
         assert_eq!(t.feed(es), vec![es]);
         es[2] = 0x52;
         assert!(t.feed(es).is_empty());
-        let mut missing = Transport::new(Selection::parse("1").unwrap(), false);
+        let mut missing = Transport::new(Selection::parse("1").unwrap(), false, false);
         assert!(missing.feed(p).is_empty());
         assert!(missing.finish().is_err());
     }
@@ -530,7 +593,7 @@ mod tests {
 
     #[test]
     fn service_replacement_does_not_leave_stale_pat_entries() {
-        let mut transport = Transport::new(Selection::All, false);
+        let mut transport = Transport::new(Selection::All, false, false);
         for index in 0..32u16 {
             let mut s = section();
             s[3..5].copy_from_slice(&(100 + index).to_be_bytes());
@@ -565,9 +628,38 @@ mod tests {
         assert!(selection.program(&secondary, 1));
         assert!(selection.extra_pid(0x27));
         assert!(!selection.extra_pid(0x12));
-        let mut t = Transport::new(selection, false);
+        let mut t = Transport::new(selection, false, false);
         let mut eit = [0xff; 188];
         eit[..4].copy_from_slice(&[0x47, 0, 0x27, 0x10]);
         assert_eq!(t.feed(eit).last(), Some(&eit));
+    }
+
+    #[test]
+    fn fullseg_rewrites_sdt_service_type_to_digital_tv() {
+        // SDT with one service (SID 0x7d98) whose service_type is data (0xC0).
+        let sdt = vec![
+            0x42, 0, 0, 0x7e, 0x03, 0xc1, 0, 0, 0x7e, 0x03, 0xff, 0x7d, 0x98, 0xf3, 0x00, 0x07,
+            0x48, 0x05, 0xc0, 0x00, 0x02, b'A', b'B',
+        ];
+        let pmt = psi(0x1fc8, section()[..17].to_vec(), 0);
+        let mut t = Transport::new(Selection::All, false, true);
+        t.feed(pmt);
+        let out = t.feed(psi(0x11, sdt.clone(), 0));
+        let section = Sections::default()
+            .feed(out.iter().find(|p| pid(*p) == 0x11).unwrap())
+            .pop()
+            .unwrap();
+        assert_eq!(section[0], 0x42);
+        assert_eq!(section[18], 0x01, "service_type must become digital TV");
+        assert_eq!(crc32(&section), 0);
+
+        let mut t = Transport::new(Selection::All, false, false);
+        t.feed(pmt);
+        let out = t.feed(psi(0x11, sdt, 0));
+        let section = Sections::default()
+            .feed(out.iter().find(|p| pid(*p) == 0x11).unwrap())
+            .pop()
+            .unwrap();
+        assert_eq!(section[18], 0xc0, "unmodified without --fullseg");
     }
 }

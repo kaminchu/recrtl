@@ -31,13 +31,13 @@ pub struct Decoder {
     pub corrected: u64,
 }
 impl Decoder {
-    pub fn new(selection: Selection, strip: bool) -> Self {
+    pub fn new(selection: Selection, strip: bool, fullseg: bool) -> Self {
         Self {
             resampler: Resampler::new(),
             pending: vec![],
             frontend: Frontend::new(),
             fec: None,
-            transport: Transport::new(selection, strip),
+            transport: Transport::new(selection, strip, fullseg),
             input_samples: 0,
             accepted: 0,
             rejected: 0,
@@ -222,7 +222,7 @@ impl Drop for Output {
 pub fn run(args: &Args) -> Result<()> {
     let (frequency, seconds) = args.validate()?;
     let selection = Selection::parse(&args.sid)?;
-    let mut decoder = Decoder::new(selection, args.strip);
+    let mut decoder = Decoder::new(selection, args.strip, args.fullseg);
     let stop = Arc::new(AtomicBool::new(false));
     let stopped = stop.clone();
     ctrlc::set_handler(move || stopped.store(true, Ordering::Relaxed))?;

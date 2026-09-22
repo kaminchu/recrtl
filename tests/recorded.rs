@@ -97,7 +97,7 @@ fn receiver_reacquires_after_signal_loss() {
     use recrtl::{receiver::Decoder, ts::Selection};
     let path = std::env::var("RECRTL_TEST_IQ").expect("RECRTL_TEST_IQ is required");
     let data = std::fs::read(path).unwrap();
-    let mut decoder = Decoder::new(Selection::All, false);
+    let mut decoder = Decoder::new(Selection::All, false, false);
     for chunk in data.chunks(262144) {
         decoder.feed(chunk).unwrap();
     }
