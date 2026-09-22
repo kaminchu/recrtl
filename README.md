@@ -142,6 +142,22 @@ PATHに含まれない場合は、`command` の `recrtl` を実際の実行フ�
 同じ実行ユーザーにUSBデバイスへのアクセス権も必要です。
 Dockerで動かす場合は、コンテナ内に `recrtl` と `librtlsdr` を用意し、USBデバイスを渡してください。
 
+この設定でMirakurunの地上波チャンネルスキャンとワンセグのEPG取得を行えます。
+`--sid` は省略（既定の `all`）し、Mirakurun側でサービスを選択してください。
+`--sid epg` はワンセグ用EITを選択しないため、チューナーの起動コマンドには指定しません。
+Mirakurunの `disableEITParsing` は `false`（既定値）にします。
+スキャンではワンセグのサービスID・局名が登録されます。既存のフルセグ用サービスIDを
+`channels.yml` に指定している場合は、ワンセグ用に設定し直してください。
+
+スキャンに必要なPATは、SDTから取得した放送のTS IDとNIT PIDへの参照を含めて生成します。
+ワンセグ用EIT（PID `0x27`）はそのまま残し、Mirakurunが解析するPID `0x12` にも出力します。
+元からPID `0x12` のEITがある場合も、セクション単位でまとめて連続性カウンターを付け直します。
+対応先の処理は[MirakurunのTSFilter](https://github.com/Chinachu/Mirakurun/blob/master/src/Mirakurun/TSFilter.ts)を参照してください。
+
+取得できる番組情報は、ワンセグで放送され、Mirakurunが解析できる範囲に限られます。
+確認済みの6局では現在・次の番組を取得できますが、フルセグ相当の数日分の番組表は保証しません。
+ワンセグに含まれない番組情報を補完・生成する機能はありません。
+
 ## 受信確認用オプション
 
 ```sh
@@ -188,7 +204,7 @@ RTL-SDR / IQ file (2.048 MS/s u8 IQ)
 
 同期を失った場合は同期・FEC・番組情報をリセットして再取得します。
 無信号や復号失敗からダミーTSは生成しません。
-PATは部分受信PMTから生成し、ローカル再生用のtransport_stream_id=1を使用します。
+PATは部分受信PMTから生成し、transport_stream_idは実TSのSDTに合わせます（SDT取得前は暫定値1）。
 放送局一覧は旧実装のデータを `data/stations.json` に保存したもので、最新の割当を保証するものではありません。
 
 ## テスト
@@ -204,6 +220,9 @@ RECRTL_TEST_IQ=/path/to/capture.u8iq \
 ```
 
 通常のテストは受信機・Python・GNU Radioなしで実行できます。
+Mirakurun向けには、PATのTS ID・NIT参照、EITのPID変換・分割セクションの結合・CRCを検証します。
+また、6局分の保存TSを使い、Mirakurun 4.1.3のTSFilter・EPG処理による局名・サービスID・
+現在／次の番組名・開始時刻・長さの取得をオフラインで確認しています。
 実IQテストはTS同期、H.264/AACのフレーム数、ffmpegによる厳密な復号を検証します。
 実機と実IQではMode 3・GI 1/8・QPSK・符号化率2/3・時間インターリーブ長4を検証しています。
 他の符号化率はViterbiの符号化・復号テストで確認しています。

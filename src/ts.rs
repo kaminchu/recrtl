@@ -174,6 +174,8 @@ pub struct Transport {
     counter: u8,
     count: usize,
     version: u8,
+    tsid: u16,
+    eit_counter: u8,
     strip: bool,
     pub written: u64,
 }
@@ -186,6 +188,8 @@ impl Transport {
             counter: 0,
             count: 0,
             version: 0,
+            tsid: 1,
+            eit_counter: 0,
             strip,
             written: 0,
         }
@@ -195,6 +199,19 @@ impl Transport {
             return vec![];
         }
         let id = pid(&p);
+        if id == 0x11 {
+            for s in self.sections.feed(&p) {
+                // Only the current actual-TS SDT identifies this transport.
+                if s[0] == 0x42 && s.len() >= 15 && s[5] & 1 != 0 {
+                    let tsid = u16::from_be_bytes([s[3], s[4]]);
+                    if self.tsid != tsid {
+                        self.tsid = tsid;
+                        self.version = (self.version + 1) & 31;
+                        self.count = 0;
+                    }
+                }
+            }
+        }
         if (0x1fc8..=0x1fcf).contains(&id) {
             for s in self.sections.feed(&p) {
                 if s[0] != 2 || s.len() < 16 || s[5] & 1 == 0 {
@@ -254,6 +271,8 @@ impl Transport {
                 s.extend(program.sid.to_be_bytes());
                 s.extend((0xe000 | program.pmt).to_be_bytes());
             }
+            s[3..5].copy_from_slice(&self.tsid.to_be_bytes());
+            s.extend([0, 0, 0xe0, 0x10]); // program 0 announces the NIT PID
             s[2] = (s.len() + 4 - 3) as u8;
             let crc = crc32(&s);
             s.extend(crc.to_be_bytes());
@@ -264,13 +283,37 @@ impl Transport {
             out.push(pat);
         }
         self.count += 1;
-        out.push(p);
+        if id != 0x12 {
+            out.push(p);
+        }
+        if matches!(id, 0x12 | 0x27) {
+            // Mirakurun parses EIT on PID 0x12, not the one-seg PID 0x27.
+            // Merge complete sections so native EIT and mirrored L-EIT cannot
+            // interleave partial sections or clash in continuity counters.
+            for s in self.sections.feed(&p) {
+                let mut data = vec![0]; // pointer_field
+                data.extend(s);
+                for (i, chunk) in data.chunks(184).enumerate() {
+                    let mut eit = [0xff; 188];
+                    eit[..4].copy_from_slice(&[
+                        0x47,
+                        if i == 0 { 0x40 } else { 0 },
+                        0x12,
+                        0x10 | self.eit_counter,
+                    ]);
+                    eit[4..4 + chunk.len()].copy_from_slice(chunk);
+                    self.eit_counter = (self.eit_counter + 1) % 16;
+                    out.push(eit);
+                }
+            }
+        }
         self.written += out.len() as u64;
         out
     }
     pub fn reset(&mut self) {
         self.sections = Sections::default();
         self.programs.clear();
+        self.tsid = 1;
         self.count = 0;
         self.version = (self.version + 1) & 31;
     }
@@ -306,6 +349,137 @@ mod tests {
         }
         p[188 - data.len()..].copy_from_slice(data);
         p
+    }
+    fn psi(id: u16, mut s: Vec<u8>, cc: u8) -> [u8; 188] {
+        let length = s.len() + 1;
+        s[1] = 0xb0 | (length >> 8) as u8;
+        s[2] = length as u8;
+        s.extend(crc32(&s).to_be_bytes());
+        let mut data = vec![0];
+        data.extend(s);
+        let mut p = packet(&data, cc, true);
+        p[1] = 0x40 | (id >> 8) as u8;
+        p[2] = id as u8;
+        p
+    }
+    fn sdt(table: u8, current: bool) -> [u8; 188] {
+        psi(
+            0x11,
+            vec![
+                table,
+                0,
+                0,
+                0x7e,
+                3,
+                0xc0 | u8::from(current),
+                0,
+                0,
+                0x7e,
+                3,
+                0xff,
+            ],
+            0,
+        )
+    }
+    #[test]
+    fn mirakurun_scan_pat_matches_sdt_and_announces_nit() {
+        let mut t = Transport::new(Selection::All, false);
+        t.feed(psi(0x1fc8, section()[..17].to_vec(), 0));
+        let out = t.feed(sdt(0x42, true));
+        assert_eq!(pid(&out[0]), 0, "PAT must precede the actual SDT");
+        let pat = Sections::default().feed(&out[0]).pop().unwrap();
+        assert_eq!(&pat[3..5], &[0x7e, 3]);
+        let programs = pat[8..pat.len() - 4].as_chunks::<4>().0;
+        assert!(programs.contains(&[0, 0, 0xe0, 0x10]));
+        assert!(programs.contains(&[0x7d, 0x98, 0xff, 0xc8]));
+        assert_eq!(out.last(), Some(&sdt(0x42, true)));
+        t.reset();
+        let out = t.feed(psi(0x1fc8, section()[..17].to_vec(), 0));
+        let pat = Sections::default().feed(&out[0]).pop().unwrap();
+        assert_eq!(
+            &pat[3..5],
+            &[0, 1],
+            "reset must forget the previous station"
+        );
+    }
+    #[test]
+    fn mirakurun_ignores_invalid_or_other_sdt() {
+        for mut p in [sdt(0x46, true), sdt(0x42, false), sdt(0x42, true)] {
+            if p == sdt(0x42, true) {
+                p[187] ^= 1;
+            }
+            let mut t = Transport::new(Selection::All, false);
+            t.feed(p);
+            let out = t.feed(psi(0x1fc8, section()[..17].to_vec(), 0));
+            let pat = Sections::default().feed(&out[0]).pop().unwrap();
+            assert_eq!(&pat[3..5], &[0, 1]);
+        }
+    }
+    #[test]
+    fn mirakurun_receives_one_seg_eit_on_standard_pid() {
+        let mut t = Transport::new(Selection::All, false);
+        t.feed(psi(0x1fc8, section()[..17].to_vec(), 0));
+        let eit = psi(
+            0x27,
+            vec![
+                0x4e, 0, 0, 0x7d, 0x98, 0xc1, 0, 0, 0x7e, 3, 0x7e, 3, 0, 0x4e,
+            ],
+            7,
+        );
+        let expected = Sections::default().feed(&eit);
+        let out = t.feed(eit);
+        assert!(out.contains(&eit), "retain the original one-seg EIT");
+        let mut parser = Sections::default();
+        let actual: Vec<_> = out
+            .iter()
+            .filter(|p| pid(*p) == 0x12)
+            .flat_map(|p| parser.feed(p))
+            .collect();
+        assert_eq!(actual, expected);
+    }
+    #[test]
+    fn mirakurun_merges_split_eit_without_corrupting_sections() {
+        let mut t = Transport::new(Selection::All, false);
+        t.feed(psi(0x1fc8, section()[..17].to_vec(), 0));
+        // A long EIT section, with a native PID 0x12 section arriving midway.
+        let mut s = vec![
+            0x4e, 0xf1, 0x2b, 0x7d, 0x98, 0xc1, 0, 0, 0x7e, 3, 0x7e, 3, 0, 0x4e,
+        ];
+        s.resize(298, 0);
+        s.extend(crc32(&s).to_be_bytes());
+        let mut first = vec![0];
+        first.extend(&s[..150]);
+        let mut a = packet(&first, 5, true);
+        a[1] = 0x40;
+        a[2] = 0x27;
+        let mut b = packet(&s[150..], 6, false);
+        b[1] = 0;
+        b[2] = 0x27;
+        let native = psi(
+            0x12,
+            vec![
+                0x4e, 0, 0, 0x7d, 0x98, 0xc1, 0, 0, 0x7e, 3, 0x7e, 3, 0, 0x4e,
+            ],
+            11,
+        );
+        let mut expected = Sections::default().feed(&native);
+        expected.push(s);
+        let mut out = vec![];
+        for p in [a, native, b] {
+            out.extend(t.feed(p).into_iter().filter(|p| pid(p) == 0x12));
+        }
+        assert_eq!(out.len(), 3);
+        for pair in out.windows(2) {
+            assert_eq!(pair[1][3] & 15, (pair[0][3] + 1) & 15);
+        }
+        let mut parser = Sections::default();
+        let actual: Vec<_> = out.iter().flat_map(|p| parser.feed(p)).collect();
+        assert_eq!(actual, expected);
+        // A corrupt L-EIT section must never be mirrored to the standard PID.
+        let mut corrupt = native;
+        corrupt[2] = 0x27;
+        corrupt[187] ^= 1;
+        assert!(t.feed(corrupt).iter().all(|p| pid(p) != 0x12));
     }
     #[test]
     fn crc_known_vector() {
@@ -367,7 +541,7 @@ mod tests {
             data.extend(s);
             let output = transport.feed(packet(&data, (index % 16) as u8, true));
             let pat = Sections::default().feed(&output[0]).pop().unwrap();
-            assert_eq!(pat.len(), 16);
+            assert_eq!(pat.len(), 20);
             assert_eq!(u16::from_be_bytes([pat[8], pat[9]]), 100 + index);
         }
     }
