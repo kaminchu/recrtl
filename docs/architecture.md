@@ -104,6 +104,16 @@ recrtlは `0xC4` を持たない各イベントに、AACステレオ・48 kHz・
 固定値（`0xC4 0x09 0xF2 0x03 0x01 0x0F 0xFF 0x4F 0x6A 0x70 0x6E`）の記述子を
 追加し、セクション長とCRCを更新します。
 
+### EPG取得の早期完了
+
+ワンセグはEITスケジュール（table_id `0x50`〜`0x5F`）を送信しません。Mirakurunは
+スケジュールEITが揃った時点でEPG取得を完了とみなすため、そのままでは毎回
+`epgRetrievalTime`（既定10分）のタイムアウトまで待機します。`--compatible konomitv`
+は、p/f EITを基にイベントを含まない空のスケジュールEITを、SDT・PMTから得た
+サービスごとに合成してPID `0x12` に出力します。これによりMirakurunはフルセグと
+同様にEPG取得を早期に完了します。番組情報そのものはワンセグのp/f（現在・次のみ）
+のままです。
+
 ### 既存データベースへの反映
 
 Mirakurunはサービス情報を `SERVICES_DB_PATH`（既定では `var/db/services.json`）に

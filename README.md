@@ -169,7 +169,10 @@ recrtl [OPTIONS] CHANNEL RECTIME DESTFILE
   one-seg L-EIT lacks is added to every event, so Mirakurun exposes `audios` in
   its program information (fixed AAC stereo, 48 kHz, Japanese). This avoids the
   problem where KonomiTV cannot ingest program information that lacks audio
-  metadata.
+  metadata. Empty EIT schedule sections (`0x50`..`0x5F`), which one-seg never
+  broadcasts, are also synthesized so Mirakurun finishes EPG gathering early
+  like it does for full-segment, instead of waiting for the retrieval timeout
+  (program information is still limited to current/next).
 - `--help` / `-h`, `--version` / `-v`, `--list` / `-l`: help, version, and the
   physical channel list.
 

@@ -19,6 +19,9 @@ L-EITには音声コンポーネント記述子が含まれないため、Miraku
   フルセグのデジタルTVサービスとして認識させます。
 - 各イベントに音声コンポーネント記述子（`0xC4`、AACステレオ・48 kHz・日本語の
   固定値）を追加し、番組情報に `audios` を出します。
+- 空のEITスケジュール（`0x50`〜`0x5F`）を合成し、MirakurunがEPG取得を
+  `epgRetrievalTime`（既定10分）まで待たずに完了できるようにします。番組情報は
+  ワンセグの現在・次のみです。
 
 処理の詳細は [architecture.md](architecture.md#mirakurun互換処理-compatible-konomitv)
 を参照してください。

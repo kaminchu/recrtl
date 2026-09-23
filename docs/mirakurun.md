@@ -54,9 +54,11 @@ RTL-SDRを1台使う場合の記述例です。設定ファイルの場所は
   command: recrtl --dev 0 --compatible konomitv <channel> - -
 ```
 
-`--compatible konomitv` はSDTの `service_type` とEITの音声記述子だけを補うため、
-映像・音声はワンセグのままです（解像度はMirakurun上では `240p` のままです）。
-MirakurunはPATに含まれるサービスだけをSDTから登録するため、SIDは変わりません。
+`--compatible konomitv` はSDTの `service_type`、EITの音声記述子、空のEIT
+スケジュール（EPG取得の早期完了用）だけを補うため、映像・音声はワンセグのままです
+（解像度はMirakurun上では `240p` のままです）。MirakurunはPATに含まれるサービス
+だけをSDTから登録するため、SIDは変わりません。EPG取得はフルセグと同様に
+早期完了し、取得できる番組情報はワンセグの現在・次のみです。
 処理の詳細は [architecture.md](architecture.md#mirakurun互換処理-compatible-konomitv)
 を参照してください。
 

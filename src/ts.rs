@@ -192,6 +192,54 @@ fn konomitv_eit(section: &[u8]) -> Vec<u8> {
     out.extend_from_slice(&crc.to_be_bytes());
     out
 }
+/// Service IDs of the current actual-TS SDT.
+fn sdt_services(section: &[u8]) -> BTreeSet<u16> {
+    let mut services = BTreeSet::new();
+    if section.len() < 15 || section[0] != 0x42 {
+        return services;
+    }
+    let end = section.len() - 4;
+    let mut i = 11;
+    while i + 5 <= end {
+        let dlen = ((section[i + 3] as usize & 15) << 8) + section[i + 4] as usize;
+        if i + 5 + dlen > end {
+            break;
+        }
+        services.insert(u16::from_be_bytes([section[i], section[i + 1]]));
+        i += 5 + dlen;
+    }
+    services
+}
+/// Synthesize an empty EIT schedule section (table_id 0x50..=0x5F) for one
+/// service from a present/following section. One-seg never broadcasts EIT
+/// schedule, so Mirakurun's EPG gatherer never marks the guide as complete and
+/// always runs until the retrieval timeout. These sections carry no events;
+/// they only move Mirakurun's readiness bookkeeping forward. `last_table_id`
+/// is used so several services can be registered before any is declared ready.
+fn konomitv_schedule(section: &[u8], service_id: u16, table_id: u8, last: u8) -> Vec<u8> {
+    if section.len() < 14 || !(0x4e..=0x6f).contains(&section[0]) {
+        return vec![];
+    }
+    let mut s = vec![
+        table_id,
+        0xb0,
+        0x0f, // header plus CRC, no events
+        (service_id >> 8) as u8,
+        service_id as u8,
+        section[5] | 1, // keep the version, force current_next_indicator
+        0,              // section_number
+        0,              // last_section_number
+        section[8],
+        section[9],
+        section[10],
+        section[11],
+        0,    // segment_last_section_number
+        last, // last_table_id
+    ];
+    let crc = crc32(&s);
+    s.extend_from_slice(&crc.to_be_bytes());
+    s
+}
 /// Wrap a complete PSI/SI section in TS packets with its own continuity counter.
 fn emit_section(section: &[u8], id: u16, counter: &mut u8, out: &mut Vec<[u8; 188]>) {
     let mut data = vec![0]; // pointer_field
@@ -289,6 +337,7 @@ pub struct Transport {
     tsid: u16,
     eit_counter: u8,
     sdt_counter: u8,
+    services: BTreeSet<u16>,
     strip: bool,
     konomitv: bool,
     pub written: u64,
@@ -305,6 +354,7 @@ impl Transport {
             tsid: 1,
             eit_counter: 0,
             sdt_counter: 0,
+            services: BTreeSet::new(),
             strip,
             konomitv,
             written: 0,
@@ -325,6 +375,9 @@ impl Transport {
                         self.tsid = tsid;
                         self.version = (self.version + 1) & 31;
                         self.count = 0;
+                    }
+                    if self.konomitv {
+                        self.services.extend(sdt_services(&s));
                     }
                 }
                 if self.konomitv {
@@ -422,26 +475,45 @@ impl Transport {
             // Merge complete sections so native EIT and mirrored L-EIT cannot
             // interleave partial sections or clash in continuity counters.
             for s in self.sections.feed(&p) {
+                let one_seg = id == 0x27;
                 // Fill in the audio metadata the one-seg L-EIT omits so
                 // Mirakurun reports `audios` for the mirrored program.
-                let s = if id == 0x27 && self.konomitv {
+                let s = if one_seg && self.konomitv {
                     konomitv_eit(&s)
                 } else {
                     s
                 };
-                let mut data = vec![0]; // pointer_field
-                data.extend(s);
-                for (i, chunk) in data.chunks(184).enumerate() {
-                    let mut eit = [0xff; 188];
-                    eit[..4].copy_from_slice(&[
-                        0x47,
-                        if i == 0 { 0x40 } else { 0 },
-                        0x12,
-                        0x10 | self.eit_counter,
-                    ]);
-                    eit[4..4 + chunk.len()].copy_from_slice(chunk);
-                    self.eit_counter = (self.eit_counter + 1) % 16;
-                    out.push(eit);
+                emit_section(&s, 0x12, &mut self.eit_counter, &mut out);
+                // Wait for the SDT so every service is known before readiness
+                // is declared; otherwise Mirakurun could finish gathering
+                // after the first service.
+                if !(one_seg && self.konomitv) || self.services.is_empty() {
+                    continue;
+                }
+                // Register every known service before declaring any ready, so
+                // Mirakurun does not finish gathering after the first one.
+                let mut services: BTreeSet<u16> = self.services.clone();
+                services.extend(self.programs.keys().copied());
+                services.insert(u16::from_be_bytes([s[3], s[4]]));
+                for &sid in &services {
+                    for table_id in [0x50u8, 0x58] {
+                        emit_section(
+                            &konomitv_schedule(&s, sid, table_id, 0x5f),
+                            0x12,
+                            &mut self.eit_counter,
+                            &mut out,
+                        );
+                    }
+                }
+                for &sid in &services {
+                    for table_id in [0x50u8, 0x58] {
+                        emit_section(
+                            &konomitv_schedule(&s, sid, table_id, table_id),
+                            0x12,
+                            &mut self.eit_counter,
+                            &mut out,
+                        );
+                    }
                 }
             }
         }
@@ -451,6 +523,7 @@ impl Transport {
     pub fn reset(&mut self) {
         self.sections = Sections::default();
         self.programs.clear();
+        self.services.clear();
         self.tsid = 1;
         self.count = 0;
         self.version = (self.version + 1) & 31;
@@ -785,5 +858,75 @@ mod tests {
                 0xc4, 0x09, 0xf2, 0x03, 0x01, 0x0f, 0xff, 0x4f, 0x6a, 0x70, 0x6e
             ][..]
         );
+    }
+
+    fn sdt_with_services(tsid: u16, onid: u16, sids: &[u16]) -> [u8; 188] {
+        let mut s = vec![0x42, 0, 0];
+        s.extend(tsid.to_be_bytes());
+        s.push(0xc1);
+        s.push(0);
+        s.push(0);
+        s.extend(onid.to_be_bytes());
+        s.push(0xff);
+        for sid in sids {
+            s.extend(sid.to_be_bytes());
+            s.extend([0xfc, 0x00, 0x00]);
+        }
+        psi(0x11, s, 0)
+    }
+
+    fn eit_sections(output: &[[u8; 188]]) -> Vec<Vec<u8>> {
+        let mut parser = Sections::default();
+        output
+            .iter()
+            .filter(|p| pid(*p) == 0x12)
+            .flat_map(|p| parser.feed(p))
+            .collect()
+    }
+
+    #[test]
+    fn konomitv_emits_empty_eit_schedule_for_mirakurun() {
+        let eit = vec![
+            0x4e, 0, 0, 0x7d, 0x98, 0xc1, 0, 0, 0x7e, 0x03, 0x7e, 0x03, 0, 0x4e, 0x1d, 0x3a, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x80, 0x0e, 0x4d, 0x08, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x54, 0x02, 0x00, 0x00,
+        ];
+        let pmt = psi(0x1fc8, section()[..17].to_vec(), 0);
+        let sdt = sdt_with_services(0x7e03, 0x7e03, &[0x7d98, 0x7da0]);
+
+        let mut t = Transport::new(Selection::All, false, false);
+        t.feed(pmt);
+        t.feed(sdt);
+        let sections = eit_sections(&t.feed(psi(0x27, eit.clone(), 0)));
+        assert!(sections.iter().all(|s| s[0] != 0x50 && s[0] != 0x58));
+
+        let mut t = Transport::new(Selection::All, false, true);
+        t.feed(pmt);
+        t.feed(sdt);
+        let sections = eit_sections(&t.feed(psi(0x27, eit, 0)));
+        for sid in [0x7d98u16, 0x7da0] {
+            for table_id in [0x50u8, 0x58] {
+                for last in [0x5fu8, table_id] {
+                    let s = sections
+                        .iter()
+                        .find(|s| {
+                            s[0] == table_id
+                                && s[13] == last
+                                && u16::from_be_bytes([s[3], s[4]]) == sid
+                        })
+                        .unwrap_or_else(|| {
+                            panic!("missing schedule table {table_id:#x}/{last:#x} for {sid:#x}")
+                        });
+                    assert_eq!(crc32(s), 0);
+                    assert_eq!(s.len(), 18, "schedule sections carry no events");
+                    assert_eq!(s[1] & 0xf0, 0xb0);
+                    assert_eq!(s[5] & 1, 1, "current_next_indicator");
+                    assert_eq!(s[6], 0, "section_number");
+                    assert_eq!(s[7], 0, "last_section_number");
+                    assert_eq!(&s[8..12], &[0x7e, 0x03, 0x7e, 0x03]);
+                    assert_eq!(s[12], 0, "segment_last_section_number");
+                }
+            }
+        }
     }
 }
