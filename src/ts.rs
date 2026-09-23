@@ -129,6 +129,68 @@ fn fullseg_sdt(section: &[u8]) -> Vec<u8> {
     s[end..].copy_from_slice(&crc.to_be_bytes());
     s
 }
+/// Add a synthesized audio component descriptor (0xC4) to every event in a
+/// one-seg EIT section that lacks one. The one-seg L-EIT only carries
+/// short-event/content descriptors, so Mirakurun exposes no `audio`/`audios`
+/// and clients such as KonomiTV fail to parse the program. The descriptor is
+/// filled with fixed one-seg values (AAC stereo, 48 kHz, Japanese, main).
+/// Section length and CRC are refreshed. Other sections pass through.
+fn fullseg_eit(section: &[u8]) -> Vec<u8> {
+    // EIT table_ids are 0x4E..=0x6F; anything else passes through.
+    if section.len() < 18 || !(0x4e..=0x6f).contains(&section[0]) {
+        return section.to_vec();
+    }
+    let end = section.len() - 4;
+    let mut out = section[..14].to_vec();
+    let mut i = 14;
+    while i + 12 <= end {
+        let dlen = ((section[i + 10] as usize & 15) << 8) + section[i + 11] as usize;
+        let stop = i + 12 + dlen;
+        if stop > end {
+            return section.to_vec();
+        }
+        let mut j = i + 12;
+        let mut has_audio = false;
+        while j + 2 <= stop {
+            let len = section[j + 1] as usize;
+            if j + 2 + len > stop {
+                break;
+            }
+            if section[j] == 0xc4 {
+                has_audio = true;
+                break;
+            }
+            j += 2 + len;
+        }
+        let extra = if has_audio { 0 } else { 11 };
+        let new_dlen = dlen + extra;
+        if new_dlen > 0xfff {
+            return section.to_vec();
+        }
+        // event_id/start_time/duration + refreshed running_status & length
+        out.extend_from_slice(&section[i..i + 10]);
+        out.push((section[i + 10] & 0xf0) | ((new_dlen >> 8) as u8 & 0x0f));
+        out.push(new_dlen as u8);
+        out.extend_from_slice(&section[i + 12..stop]);
+        if extra != 0 {
+            // stream_content=audio, component_type=stereo, tag=1, AAC,
+            // no simulcast, main component, 48 kHz, Japanese.
+            out.extend_from_slice(&[
+                0xc4, 0x09, 0xf2, 0x03, 0x01, 0x0f, 0xff, 0x4f, 0x6a, 0x70, 0x6e,
+            ]);
+        }
+        i = stop;
+    }
+    let length = out.len() + 1; // section_length counts bytes after byte 2, incl. CRC
+    if length > 0xfff {
+        return section.to_vec();
+    }
+    out[1] = (section[1] & 0xf0) | ((length >> 8) as u8 & 0x0f);
+    out[2] = length as u8;
+    let crc = crc32(&out);
+    out.extend_from_slice(&crc.to_be_bytes());
+    out
+}
 /// Wrap a complete PSI/SI section in TS packets with its own continuity counter.
 fn emit_section(section: &[u8], id: u16, counter: &mut u8, out: &mut Vec<[u8; 188]>) {
     let mut data = vec![0]; // pointer_field
@@ -354,6 +416,13 @@ impl Transport {
             // Merge complete sections so native EIT and mirrored L-EIT cannot
             // interleave partial sections or clash in continuity counters.
             for s in self.sections.feed(&p) {
+                // Fill in the audio metadata the one-seg L-EIT omits so
+                // Mirakurun reports `audios` for the mirrored program.
+                let s = if id == 0x27 && self.fullseg {
+                    fullseg_eit(&s)
+                } else {
+                    s
+                };
                 let mut data = vec![0]; // pointer_field
                 data.extend(s);
                 for (i, chunk) in data.chunks(184).enumerate() {
@@ -661,5 +730,46 @@ mod tests {
             .pop()
             .unwrap();
         assert_eq!(section[18], 0xc0, "unmodified without --fullseg");
+    }
+
+    #[test]
+    fn fullseg_fills_missing_eit_audio_descriptor() {
+        // EIT[p/f] for SID 0x7d98 with one event carrying only a short event
+        // descriptor and a content descriptor, like a one-seg L-EIT.
+        let eit = vec![
+            0x4e, 0, 0, 0x7d, 0x98, 0xc1, 0, 0, 0x7e, 0x03, 0x7e, 0x03, 0, 0x4e, 0x1d, 0x3a, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x80, 0x0e, 0x4d, 0x08, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x54, 0x02, 0x00, 0x00,
+        ];
+        let pmt = psi(0x1fc8, section()[..17].to_vec(), 0);
+
+        let mut t = Transport::new(Selection::All, false, false);
+        t.feed(pmt);
+        let out = t.feed(psi(0x27, eit.clone(), 0));
+        let section = Sections::default()
+            .feed(out.iter().find(|p| pid(*p) == 0x12).unwrap())
+            .pop()
+            .unwrap();
+        assert!(!section.contains(&0xc4), "unmodified without --fullseg");
+
+        let mut t = Transport::new(Selection::All, false, true);
+        t.feed(pmt);
+        let out = t.feed(psi(0x27, eit, 0));
+        let section = Sections::default()
+            .feed(out.iter().find(|p| pid(*p) == 0x12).unwrap())
+            .pop()
+            .unwrap();
+        assert_eq!(crc32(&section), 0);
+        let end = section.len() - 4;
+        let dlen = ((section[24] as usize & 15) << 8) + section[25] as usize;
+        assert_eq!(26 + dlen, end, "event descriptor loop must end at the CRC");
+        let audio = section[26..26 + dlen]
+            .windows(11)
+            .find(|w| w[0] == 0xc4 && w[1] == 0x09)
+            .expect("synthesized audio component descriptor");
+        assert_eq!(
+            audio,
+            &[0xc4, 0x09, 0xf2, 0x03, 0x01, 0x0f, 0xff, 0x4f, 0x6a, 0x70, 0x6e][..]
+        );
     }
 }
