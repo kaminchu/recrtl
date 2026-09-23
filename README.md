@@ -12,6 +12,40 @@ recrtl currently targets Linux.
 
 **日本語のREADMEは [README.ja.md](README.ja.md) です。**
 
+## Background
+
+Receiving Japanese terrestrial digital TV (ISDB-T) on a PC has traditionally
+depended on dedicated PCIe/USB tuner cards and dongles. These products are being
+discontinued one after another, and obtaining a PC-oriented full-segment tuner
+is becoming harder and more expensive every year.
+
+Receivers based on RTL-SDR, by contrast, remain relatively easy to obtain and
+inexpensive. This is not limited to devices sold as SDR: the RTL2832U chip is
+also used in one-segment USB tuners that can be bought for roughly 1,000–2,000
+yen on general marketplaces (for example, the DS-DT310BK and DS-DT308SV). Those
+devices can receive ISDB-T one-segment broadcasts, and recrtl targets exactly
+this class of hardware.
+
+One-segment broadcasting has several properties that make it well suited to
+self-hosted recording and streaming:
+
+- **Small files, no re-encoding.** One-segment video and audio are already
+  encoded as low-bitrate H.264/AAC. A recording can be stored as-is as an
+  MPEG-TS with no transcoding, so even a modest CPU or disk can retain long
+  recordings.
+- **Cheap "all-record" setups.** One-segment uses only about one sixth of a
+  full-segment channel's bandwidth and is light to decode, so several
+  inexpensive RTL2832U receivers can run in parallel on one machine to record
+  many channels at once (a so-called "all-record" / 全録 configuration).
+- **Easy to serve over low-bandwidth links.** The low bitrate makes one-segment
+  streams practical to view over limited-bandwidth connections and light enough
+  to serve from inexpensive or older single-board computers.
+
+recrtl aims to make this hardware and these use cases usable from a single,
+self-contained Rust binary: it drives an RTL-SDR-compatible receiver directly,
+demodulates one segment in software, and emits a standard MPEG-TS that existing
+tools (players, Mirakurun, mirakc, KonomiTV) can consume.
+
 ## Features
 
 - Records ISDB-T one-segment video and audio as a standard 188-byte MPEG-TS.
