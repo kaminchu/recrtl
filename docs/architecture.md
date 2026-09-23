@@ -84,8 +84,8 @@ PID `0x12` にも出力します。元からPID `0x12` のEITがある場合も�
 
 ## Mirakurun互換処理（`--compatible konomitv`）
 
-`--compatible konomitv` はSDTとEITに対して次の2つだけを行います。映像・音声は
-ワンセグのままです（Mirakurun上の解像度も `240p` のまま）。
+`--compatible konomitv` はSDT・EIT・PMTと字幕PESに対して次の処理を行います。
+映像・音声はワンセグのままです（Mirakurun上の解像度も `240p` のまま）。
 
 ### SDTの `service_type` 書き換え
 
@@ -114,6 +114,27 @@ recrtlは `0xC4` を持たない各イベントに、AACステレオ・48 kHz・
 同様にEPG取得を早期に完了します。番組情報そのものはワンセグのp/f（現在・次のみ）
 のままです。
 
+### 字幕のProfile A（フルセグ）変換
+
+ワンセグの字幕はARIB STD-B24の **Profile C**（PMTの `data_component_id` が
+`0x0012`）です。Profile Cの既定文字集合は G0=DRCS・G2=**漢字** で、GR領域が漢字に
+なります。一方 **Profile A**（フルセグ、`0x0008`）の既定は G2=**ひらがな** です。
+そのため、Profile Cの字幕データをProfile Aの既定でデコードすると、JIS X 0208の
+2バイト漢字が1バイトのひらがなとして読まれ、字幕が「ひらがなだけ」になります。
+
+`--compatible konomitv` は次を行います。
+
+- PMTの字幕コンポーネント記述子（`0xFD`）の `data_component_id` を `0x0012` から
+  `0x0008` へ書き換え、CRCを再計算します。これによりフルセグ前提のデコーダでも
+  字幕ストリームとして認識されます。
+- 字幕PESの各字幕文データユニット（`data_unit_parameter` `0x20`）の先頭、および
+  画面クリア（`CS`、`0x0C`）の直後に「G2を漢字に指定」するエスケープ
+  （`ESC 0x24 0x2A 0x42`）を挿入します。`CS` は文字集合を既定へ戻すため、その
+  直後にも再指定します。あわせてデータユニット長・データグループ長・PES長と
+  ARIB CRC-16を更新します。
+
+これによりProfile A・Profile Cのどちらのデコーダでも同じ文字列になります。
+
 ### 既存データベースへの反映
 
 Mirakurunはサービス情報を `SERVICES_DB_PATH`（既定では `var/db/services.json`）に
@@ -132,7 +153,9 @@ Mirakurunはサービス情報を `SERVICES_DB_PATH`（既定では `var/db/serv
 通常のテストは受信機・Python・GNU Radioなしで実行できます。
 
 - **Mirakurun向け:** PATのTS ID・NIT参照、EITのPID変換・分割セクションの結合・
-  CRC、`--compatible konomitv` のSDT `service_type` 書き換えとCRC再計算を検証します。
+  CRC、`--compatible konomitv` のSDT `service_type` 書き換えとCRC再計算、PMTの
+  字幕 `data_component_id` のProfile A書き換え、字幕PESへのG2指定挿入と長さ・
+  CRC-16更新を検証します。
 - **オフラインEPG:** 6局分の保存TSを使い、Mirakurun 4.1.3のTSFilter・EPG処理に
   よる局名・サービスID・現在／次の番組名・開始時刻・長さの取得を確認しています。
 - **実IQ受け入れテスト:** TS同期、H.264/AACのフレーム数、ffmpegによる厳密な復号を

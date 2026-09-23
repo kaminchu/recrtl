@@ -12,7 +12,7 @@ L-EITには音声コンポーネント記述子が含まれないため、Miraku
 `audios` が出ず、KonomiTVが番組を取り込めません。また、ワンセグのサービス種別は
 データ放送（`service_type` `0xC0`）として通知されます。
 
-`--compatible konomitv` は次の2点だけを補います。映像・音声そのものはワンセグの
+`--compatible konomitv` は次の処理を行います。映像・音声そのものはワンセグの
 ままです。
 
 - SDTの `service_type` を `0x01`（デジタルTV）に書き換え、Mirakurun/mirakcに
@@ -22,6 +22,8 @@ L-EITには音声コンポーネント記述子が含まれないため、Miraku
 - 空のEITスケジュール（`0x50`〜`0x5F`）を合成し、MirakurunがEPG取得を
   `epgRetrievalTime`（既定10分）まで待たずに完了できるようにします。番組情報は
   ワンセグの現在・次のみです。
+- ワンセグの字幕（Profile C）をフルセグ（Profile A）に変換し、Profile A前提の
+  デコーダで字幕がひらがな化するのを防ぎます。
 
 処理の詳細は [architecture.md](architecture.md#mirakurun互換処理-compatible-konomitv)
 を参照してください。

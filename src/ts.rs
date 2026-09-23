@@ -257,6 +257,278 @@ fn emit_section(section: &[u8], id: u16, counter: &mut u8, out: &mut Vec<[u8; 18
         out.push(p);
     }
 }
+/// Packetize a PES into TS packets, stuffing the final packet with an
+/// adaptation field. Used for rewritten captions.
+fn packetize(data: &[u8], id: u16, counter: &mut u8) -> Vec<[u8; 188]> {
+    data.chunks(184)
+        .enumerate()
+        .map(|(i, chunk)| {
+            let mut p = [0xff; 188];
+            p[..4].copy_from_slice(&[
+                0x47,
+                (id >> 8) as u8 | if i == 0 { 0x40 } else { 0 },
+                id as u8,
+                0x10 | *counter,
+            ]);
+            if chunk.len() < 184 {
+                p[3] |= 0x20;
+                p[4] = (183 - chunk.len()) as u8;
+                if p[4] > 0 {
+                    p[5] = 0;
+                }
+            }
+            p[188 - chunk.len()..].copy_from_slice(chunk);
+            *counter = (*counter + 1) % 16;
+            p
+        })
+        .collect()
+}
+/// CRC-16/CCITT (poly 0x1021, init 0) used by ARIB caption data groups.
+fn crc16(data: &[u8]) -> u16 {
+    let mut c = 0u16;
+    for &b in data {
+        c ^= (b as u16) << 8;
+        for _ in 0..8 {
+            c = if c & 0x8000 != 0 {
+                (c << 1) ^ 0x1021
+            } else {
+                c << 1
+            };
+        }
+    }
+    c
+}
+/// Insert the "designate G2 as Kanji" escape (ESC 0x24 0x2A 0x42) at the start
+/// of every caption statement data unit in a statement data group.
+///
+/// One-seg captions are ARIB STD-B24 Profile C, whose default G2 set is Kanji,
+/// so the text is transmitted in the GR area without an explicit designation.
+/// Profile A defaults G2 to Hiragana, so a Profile A decoder reads the two-byte
+/// kanji codes as one-byte hiragana. Making the designation explicit lets both
+/// profiles decode the text correctly.
+fn caption_designate(gdata: &mut Vec<u8>, group_id: u8) -> Option<usize> {
+    // Caption management data groups (low nibble 0) carry no statement text.
+    if group_id & 0x0f == 0 {
+        return Some(0);
+    }
+    if gdata.len() < 4 {
+        return None;
+    }
+    let tmd = gdata[0] >> 6;
+    let mut pos = 1;
+    if tmd == 0b01 || tmd == 0b10 {
+        pos += 5; // STM (start time)
+    }
+    if pos + 3 > gdata.len() {
+        return None;
+    }
+    let loop_len =
+        ((gdata[pos] as usize) << 16) | ((gdata[pos + 1] as usize) << 8) | gdata[pos + 2] as usize;
+    let loop_end = pos + 3 + loop_len;
+    if loop_end > gdata.len() {
+        return None;
+    }
+    let mut units = Vec::with_capacity(loop_len + 4);
+    let mut p = pos + 3;
+    let mut added = 0usize;
+    while p < loop_end {
+        if p + 5 > loop_end || gdata[p] != 0x1f {
+            return None;
+        }
+        let size = ((gdata[p + 2] as usize) << 16)
+            | ((gdata[p + 3] as usize) << 8)
+            | gdata[p + 4] as usize;
+        let data_end = p + 5 + size;
+        if data_end > loop_end {
+            return None;
+        }
+        if gdata[p + 1] == 0x20 {
+            // ESC 0x24 0x2A 0x42 designates G2 as Kanji. `CS` (0x0C, clear
+            // screen) resets the graphic sets, so re-designate after it too.
+            let data = &gdata[p + 5..data_end];
+            let mut body = Vec::with_capacity(data.len() + 4);
+            body.extend_from_slice(&[0x1b, 0x24, 0x2a, 0x42]);
+            let mut count = 1usize;
+            for &b in data {
+                body.push(b);
+                if b == 0x0c {
+                    body.extend_from_slice(&[0x1b, 0x24, 0x2a, 0x42]);
+                    count += 1;
+                }
+            }
+            let new_size = body.len();
+            if new_size > 0xffffff {
+                return None;
+            }
+            units.extend_from_slice(&[
+                gdata[p],
+                gdata[p + 1],
+                (new_size >> 16) as u8,
+                (new_size >> 8) as u8,
+                new_size as u8,
+            ]);
+            units.extend_from_slice(&body);
+            let delta = count * 4;
+            added += delta;
+        } else {
+            units.extend_from_slice(&gdata[p..data_end]);
+        }
+        p = data_end;
+    }
+    let new_loop_len = loop_len + added;
+    if new_loop_len > 0xffffff {
+        return None;
+    }
+    let mut out = Vec::with_capacity(gdata.len() + added);
+    out.extend_from_slice(&gdata[..pos]);
+    out.extend_from_slice(&[
+        (new_loop_len >> 16) as u8,
+        (new_loop_len >> 8) as u8,
+        new_loop_len as u8,
+    ]);
+    out.extend_from_slice(&units);
+    out.extend_from_slice(&gdata[loop_end..]);
+    *gdata = out;
+    Some(added)
+}
+/// Convert a one-seg (Profile C) caption PES to a form any decoder accepts.
+///
+/// The escape that re-designates G2 as Kanji is inserted into every statement
+/// data unit and all length fields (data unit, data group, PES) and the ARIB
+/// CRC-16 are refreshed. PES packets with an unexpected layout pass through.
+fn konomitv_caption(pes: &[u8]) -> Option<Vec<u8>> {
+    if pes.len() < 9 || pes[..3] != [0x00, 0x00, 0x01] || pes[3] != 0xbd {
+        return None;
+    }
+    let payload = 9 + pes[8] as usize;
+    if payload + 3 > pes.len() || pes[payload] != 0x80 || pes[payload + 1] != 0xff {
+        return None;
+    }
+    let mut pos = payload + 3 + (pes[payload + 2] & 0x0f) as usize;
+    if pos > pes.len() {
+        return None;
+    }
+    let declared = u16::from_be_bytes([pes[4], pes[5]]) as usize;
+    let end = if declared == 0 {
+        pes.len()
+    } else {
+        (6 + declared).min(pes.len())
+    };
+    let mut out = pes[..pos].to_vec();
+    let mut added_total = 0usize;
+    while pos + 7 <= end {
+        let size = u16::from_be_bytes([pes[pos + 3], pes[pos + 4]]) as usize;
+        let group_end = pos + 5 + size;
+        if group_end + 2 > end {
+            return None;
+        }
+        let mut gdata = pes[pos + 5..group_end].to_vec();
+        let added = caption_designate(&mut gdata, pes[pos] >> 2)?;
+        let new_size = size + added;
+        if new_size > 0xffff {
+            return None;
+        }
+        out.extend_from_slice(&[
+            pes[pos],
+            pes[pos + 1],
+            pes[pos + 2],
+            (new_size >> 8) as u8,
+            new_size as u8,
+        ]);
+        out.extend_from_slice(&gdata);
+        let start = out.len() - 5 - gdata.len();
+        let crc = crc16(&out[start..]);
+        out.extend_from_slice(&crc.to_be_bytes());
+        added_total += added;
+        pos = group_end + 2;
+    }
+    if added_total == 0 {
+        return None;
+    }
+    // Preserve any trailing bytes after the last data group.
+    if pos < end {
+        out.extend_from_slice(&pes[pos..end]);
+    }
+    if declared != 0 {
+        let new_len = declared + added_total;
+        if new_len > 0xffff {
+            return None;
+        }
+        out[4..6].copy_from_slice(&(new_len as u16).to_be_bytes());
+    }
+    Some(out)
+}
+/// Rewrite the caption data component descriptor's data_component_id from
+/// Profile C (0x0012) to Profile A (0x0008) so full-segment-only decoders
+/// accept the converted caption. Other PMT sections pass through unchanged.
+fn konomitv_pmt(section: &[u8]) -> Vec<u8> {
+    let mut s = section.to_vec();
+    if s.len() < 16 || s[0] != 0x02 {
+        return s;
+    }
+    let end = s.len() - 4;
+    let mut offset = 12 + ((s[10] as usize & 0x0f) << 8) + s[11] as usize;
+    let mut changed = false;
+    while offset + 5 <= end {
+        let mut j = offset + 5;
+        let stop = j + ((s[offset + 3] as usize & 0x0f) << 8) + s[offset + 4] as usize;
+        if stop > end {
+            break;
+        }
+        while j + 2 <= stop {
+            let len = s[j + 1] as usize;
+            if j + 2 + len > stop {
+                break;
+            }
+            if s[j] == 0xfd && len >= 2 && s[j + 2] == 0x00 && s[j + 3] == 0x12 {
+                s[j + 3] = 0x08;
+                changed = true;
+            }
+            j += 2 + len;
+        }
+        offset = stop;
+    }
+    if changed {
+        let crc = crc32(&s[..end]);
+        s[end..].copy_from_slice(&crc.to_be_bytes());
+    }
+    s
+}
+/// PID of the one-seg (Profile C) caption elementary stream in a PMT.
+fn caption_pid(section: &[u8]) -> Option<u16> {
+    if section.len() < 16 || section[0] != 0x02 {
+        return None;
+    }
+    let end = section.len() - 4;
+    let mut offset = 12 + ((section[10] as usize & 0x0f) << 8) + section[11] as usize;
+    while offset + 5 <= end {
+        let mut j = offset + 5;
+        let stop = j + ((section[offset + 3] as usize & 0x0f) << 8) + section[offset + 4] as usize;
+        if stop > end {
+            break;
+        }
+        if section[offset] == 0x06 {
+            while j + 2 <= stop {
+                let len = section[j + 1] as usize;
+                if j + 2 + len > stop {
+                    break;
+                }
+                if section[j] == 0xfd
+                    && len >= 2
+                    && section[j + 2] == 0x00
+                    && section[j + 3] == 0x12
+                {
+                    return Some(
+                        ((section[offset + 1] as u16 & 0x1f) << 8) | section[offset + 2] as u16,
+                    );
+                }
+                j += 2 + len;
+            }
+        }
+        offset = stop;
+    }
+    None
+}
 #[derive(Clone, Debug)]
 pub enum Selection {
     All,
@@ -337,7 +609,11 @@ pub struct Transport {
     tsid: u16,
     eit_counter: u8,
     sdt_counter: u8,
+    pmt_counter: u8,
     services: BTreeSet<u16>,
+    caption_pid: Option<u16>,
+    caption_pes: Vec<u8>,
+    caption_counter: u8,
     strip: bool,
     konomitv: bool,
     pub written: u64,
@@ -354,7 +630,11 @@ impl Transport {
             tsid: 1,
             eit_counter: 0,
             sdt_counter: 0,
+            pmt_counter: 0,
             services: BTreeSet::new(),
+            caption_pid: None,
+            caption_pes: Vec::new(),
+            caption_counter: 0,
             strip,
             konomitv,
             written: 0,
@@ -366,6 +646,7 @@ impl Transport {
         }
         let id = pid(&p);
         let mut sdt = vec![];
+        let mut pmt = vec![];
         if id == 0x11 {
             for s in self.sections.feed(&p) {
                 // Only the current actual-TS SDT identifies this transport.
@@ -389,6 +670,14 @@ impl Transport {
             for s in self.sections.feed(&p) {
                 if s[0] != 2 || s.len() < 16 || s[5] & 1 == 0 {
                     continue;
+                }
+                if self.konomitv {
+                    // Remember the Profile C caption PID and present the caption
+                    // descriptor as Profile A to full-segment-only decoders.
+                    if let Some(pid) = caption_pid(&s) {
+                        self.caption_pid = Some(pid);
+                    }
+                    pmt.push(konomitv_pmt(&s));
                 }
                 let sid = u16::from_be_bytes([s[3], s[4]]);
                 let mut pids = BTreeSet::from([id, ((s[8] as u16 & 31) << 8) | s[9] as u16]);
@@ -467,6 +756,14 @@ impl Transport {
                     &mut out,
                 );
             }
+        } else if (0x1fc8..=0x1fcf).contains(&id) && self.konomitv {
+            // Replace the raw PMT with the rewritten one so the caption
+            // descriptor advertises Profile A (full-seg).
+            for section in &pmt {
+                emit_section(section, id, &mut self.pmt_counter, &mut out);
+            }
+        } else if self.konomitv && Some(id) == self.caption_pid {
+            self.feed_caption(&p, &mut out);
         } else if id != 0x12 {
             out.push(p);
         }
@@ -520,6 +817,36 @@ impl Transport {
         self.written += out.len() as u64;
         out
     }
+    fn feed_caption(&mut self, p: &[u8; 188], out: &mut Vec<[u8; 188]>) {
+        let data = payload(p);
+        if data.is_empty() {
+            return;
+        }
+        if p[1] & 0x40 != 0 {
+            // A new PES starts; flush the previous one first.
+            self.flush_caption(out);
+        }
+        self.caption_pes.extend_from_slice(data);
+        let complete = self.caption_pes.len() >= 6 && {
+            let declared = u16::from_be_bytes([self.caption_pes[4], self.caption_pes[5]]) as usize;
+            declared != 0 && self.caption_pes.len() >= 6 + declared
+        };
+        if complete || self.caption_pes.len() > 6 + u16::MAX as usize {
+            self.flush_caption(out);
+        }
+    }
+    fn flush_caption(&mut self, out: &mut Vec<[u8; 188]>) {
+        let Some(id) = self.caption_pid else {
+            self.caption_pes.clear();
+            return;
+        };
+        if self.caption_pes.is_empty() {
+            return;
+        }
+        let pes = std::mem::take(&mut self.caption_pes);
+        let rewritten = konomitv_caption(&pes).unwrap_or(pes);
+        out.extend(packetize(&rewritten, id, &mut self.caption_counter));
+    }
     pub fn reset(&mut self) {
         self.sections = Sections::default();
         self.programs.clear();
@@ -527,6 +854,10 @@ impl Transport {
         self.tsid = 1;
         self.count = 0;
         self.version = (self.version + 1) & 31;
+        self.caption_pid = None;
+        self.caption_pes.clear();
+        self.caption_counter = 0;
+        self.pmt_counter = 0;
     }
     pub fn finish(&self) -> Result<()> {
         if self.written == 0 {
@@ -928,5 +1259,95 @@ mod tests {
                 }
             }
         }
+    }
+
+    // Real one-seg caption PES (Profile C) captured from a broadcast.
+    fn caption_pes() -> Vec<u8> {
+        vec![
+            0x00, 0x00, 0x01, 0xbd, 0x00, 0x44, 0x80, 0x81, 0x17, 0x21, 0x0e, 0x25, 0x90, 0x0d,
+            0x8e, 0x43, 0x43, 0x49, 0x53, 0x04, 0xbf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0x80, 0xff, 0xf0, 0x04, 0x00, 0x00, 0x00, 0x20, 0x3f, 0x00,
+            0x00, 0x1c, 0x1f, 0x20, 0x00, 0x00, 0x17, 0x0c, 0x83, 0x8a, 0xa3, 0xb3, 0xa4, 0xc4,
+            0xa4, 0xce, 0xa5, 0xd5, 0xa5, 0xed, 0xa5, 0xa2, 0xa4, 0xab, 0xa4, 0xe9, 0xa4, 0xca,
+            0xa4, 0xea, 0x04, 0x77,
+        ]
+    }
+
+    // PMT carrying a Profile C (one-seg) caption as data_component_id 0x0012.
+    fn caption_pmt() -> [u8; 188] {
+        psi(
+            0x1fc8,
+            vec![
+                0x02, 0, 0, 0x7d, 0x98, 0xc1, 0, 0, 0xe1, 0x50, 0xf0, 0, 0x06, 0xe1, 0x54, 0xf0,
+                0x05, 0xfd, 0x03, 0x00, 0x12, 0xad,
+            ],
+            0,
+        )
+    }
+
+    #[test]
+    fn konomitv_converts_profile_c_caption_pes() {
+        let pes = caption_pes();
+        assert_eq!(pes.len(), 74);
+        // Original group CRC-16 (verified against the wire data).
+        assert_eq!(crc16(&pes[35..72]).to_be_bytes(), pes[72..74]);
+        let out = konomitv_caption(&pes).expect("conversion");
+        assert_eq!(out.len(), 82);
+        // PES_packet_length, data_group_size and data_unit_size all grow by 8.
+        assert_eq!(u16::from_be_bytes([out[4], out[5]]), 0x4c);
+        assert_eq!(u16::from_be_bytes([out[38], out[39]]), 0x28);
+        assert_eq!(&out[46..49], &[0x00, 0x00, 0x1f]);
+        // ESC 0x24 0x2A 0x42 (designate G2 as Kanji) precedes the statement...
+        assert_eq!(&out[49..53], &[0x1b, 0x24, 0x2a, 0x42]);
+        // ...and is repeated after the CS (clear screen) that resets the sets.
+        assert_eq!(out[53], 0x0c);
+        assert_eq!(&out[54..58], &[0x1b, 0x24, 0x2a, 0x42]);
+        assert_eq!(&out[58..80], &pes[50..72]);
+        // The rewritten group CRC-16 is refreshed.
+        assert_eq!(crc16(&out[35..80]).to_be_bytes(), out[80..82]);
+    }
+
+    #[test]
+    fn konomitv_converts_caption_only_when_enabled() {
+        let pes = caption_pes();
+        for konomitv in [false, true] {
+            let mut cc = 0;
+            let packets = packetize(&pes, 0x154, &mut cc);
+            let mut t = Transport::new(Selection::All, false, konomitv);
+            t.feed(caption_pmt());
+            let mut out = vec![];
+            for p in packets {
+                out.extend(t.feed(p));
+            }
+            let data = out
+                .iter()
+                .find(|p| pid(*p) == 0x154)
+                .map(|p| payload(p).to_vec())
+                .expect("caption output");
+            if konomitv {
+                assert_eq!(&data[49..53], &[0x1b, 0x24, 0x2a, 0x42]);
+            } else {
+                assert!(data.starts_with(&[0x00, 0x00, 0x01, 0xbd]));
+                assert_eq!(&data[49..53], &pes[49..53]);
+            }
+        }
+    }
+
+    #[test]
+    fn konomitv_rewrites_caption_descriptor_to_profile_a() {
+        let section = |konomitv| {
+            let mut t = Transport::new(Selection::All, false, konomitv);
+            let out = t.feed(caption_pmt());
+            Sections::default()
+                .feed(out.iter().find(|p| pid(*p) == 0x1fc8).unwrap())
+                .pop()
+                .unwrap()
+        };
+        let original = section(false);
+        assert_eq!(&original[19..21], &[0x00, 0x12]);
+        assert_eq!(crc32(&original), 0);
+        let converted = section(true);
+        assert_eq!(crc32(&converted), 0);
+        assert_eq!(&converted[19..21], &[0x00, 0x08]);
     }
 }

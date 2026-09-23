@@ -172,7 +172,12 @@ recrtl [OPTIONS] CHANNEL RECTIME DESTFILE
   metadata. Empty EIT schedule sections (`0x50`..`0x5F`), which one-seg never
   broadcasts, are also synthesized so Mirakurun finishes EPG gathering early
   like it does for full-segment, instead of waiting for the retrieval timeout
-  (program information is still limited to current/next).
+  (program information is still limited to current/next). Finally, the one-seg
+  ARIB caption is converted to full-segment (Profile A): the caption
+  `data_component_id` in the PMT is rewritten from `0x0012` (Profile C) to
+  `0x0008` (Profile A), and a "designate G2 as Kanji" escape is inserted into
+  every caption statement so decoders that assume Profile A no longer render the
+  text as hiragana.
 - `--help` / `-h`, `--version` / `-v`, `--list` / `-l`: help, version, and the
   physical channel list.
 
