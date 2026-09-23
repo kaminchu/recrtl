@@ -1,56 +1,90 @@
 # recrtl
 
-RTL-SDRで日本の地上デジタル放送のワンセグを受信し、MPEG-TSを記録するRust製コマンドです。
-録画CLIはrecdvbの `channel rectime destfile` 形式に合わせています。
+**recrtl** is a Rust command-line recorder for Japanese terrestrial digital TV
+(ISDB-T) one-segment broadcasts using an RTL-SDR. It tunes a physical UHF
+channel, demodulates the one-segment (Layer A) signal, and writes an MPEG-TS
+stream to a file or stdout.
 
-受信処理はRustで実装し、Python・GNU Radio・gr-isdbtは不要です。
-実機のUSB制御に限り `librtlsdr` を実行時に読み込みます。
-保存IQの復号には `librtlsdr` も不要です。現在の実行対象はLinuxです。
+The receive chain is written entirely in Rust. Python, GNU Radio, and gr-isdbt
+are not required. `librtlsdr` is loaded at runtime only to drive the USB
+receiver; replaying a saved IQ capture does not need `librtlsdr` at all.
+recrtl currently targets Linux.
 
-## 依存パッケージのインストール
+**日本語のREADMEは [README.ja.md](README.ja.md) です。**
 
-Debian／Ubuntu／Raspberry Pi OSなどのaptを使う環境では、次のように準備します。
+## Features
+
+- Records ISDB-T one-segment video and audio as a standard 188-byte MPEG-TS.
+- Uses a recdvb-compatible CLI: `recrtl [OPTIONS] CHANNEL RECTIME DESTFILE`.
+- Works with a live RTL-SDR device or with a saved 2.048 MS/s IQ capture.
+- Selects services by SID, by ordinal, or by the recdvb aliases (`hd`, `sd1`,
+  `1seg`, `epg`, ...).
+- Can drop null packets and can trim incomplete H.264/AAC edges of a recording.
+- Provides Mirakurun/EPG integration workarounds for one-seg streams
+  (`--compatible konomitv`).
+- Requires no hardware for `--list`, `--list-devices`, `--list-regions`, and
+  `--list-channels`.
+
+## Requirements
+
+- **OS:** Linux (verified on Debian, Ubuntu, and Raspberry Pi OS).
+- **Toolchain:** Rust 1.98.1 or later.
+- **Hardware:** an RTL-SDR-compatible receiver for live reception. A saved IQ
+  file can be used instead for offline decoding.
+- **Optional:** `ffmpeg` (including `ffplay` and `ffprobe`) for playback and the
+  real-IQ acceptance test.
+
+Only ISDB-T **Mode 3, GI 1/8, QPSK, one segment** is supported. BS/CS and
+full-segment reception are out of scope. See
+[docs/architecture.md](docs/architecture.md) for the supported parameter ranges.
+
+## Installation
+
+### 1. Install dependencies
+
+On apt-based distributions (Debian, Ubuntu, Raspberry Pi OS):
 
 ```sh
 sudo apt update
-# ビルド用ツールとRustのインストールに使うツール
+# Build tools and the tools used to install Rust
 sudo apt install build-essential curl ca-certificates
-# 実機受信用ライブラリ、udevルール、接続確認用のrtl_test
+# Live-reception library, udev rules, and the rtl_test utility
 sudo apt install rtl-sdr
 ```
 
-`rtl-sdr` の依存関係として、そのOSに対応する `librtlsdr` もインストールされます。
-保存IQの復号だけなら `rtl-sdr` は不要です。Rustの依存クレートはビルド時にCargoが取得します。
+Installing `rtl-sdr` pulls in the matching `librtlsdr`. If you only replay saved
+IQ files, `rtl-sdr` is not required. Rust crates are fetched by Cargo at build
+time.
 
-Rust/Cargoが未導入の場合は、[公式のrustup手順](https://doc.rust-lang.org/book/ch01-01-installation.html)でインストールします。
+If Rust/Cargo is not installed, use the
+[official rustup instructions](https://doc.rust-lang.org/book/ch01-01-installation.html):
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 . "$HOME/.cargo/env"
 ```
 
-再生や実IQの受け入れテストには、追加で `ffmpeg`（`ffplay`・`ffprobe`を含む）をインストールします。
-録画だけなら不要です。
+For playback and the real-IQ acceptance test, install `ffmpeg` as well. It is
+not needed for recording.
 
 ```sh
 sudo apt install ffmpeg
 ```
 
-## ビルド
-
-Rust/Cargoでビルドします。検証済みツールチェーンはRust 1.98.1です。
+### 2. Build and install
 
 ```sh
 cargo build --release --locked
 cargo install --path . --locked
 ```
 
-## USBデバイスへのアクセス権
+### 3. Grant access to the USB device
 
-一般ユーザーで実機受信するには、USBデバイスへのアクセス権が必要です。
-Debian／Ubuntu系のパッケージに含まれるudevルールは、対応デバイスへのアクセスを
-`plugdev` グループに許可します（[パッケージの説明](https://github.com/osmocom/rtl-sdr/blob/master/debian/README.Debian)）。
-受信に使うユーザーで次を実行します。
+To receive with an unprivileged user, that user needs access to the USB device.
+The udev rules shipped with the Debian/Ubuntu `rtl-sdr` package grant access to
+supported devices to the `plugdev` group (see the
+[package notes](https://github.com/osmocom/rtl-sdr/blob/master/debian/README.Debian)).
+Run the following as the user that will receive:
 
 ```sh
 sudo groupadd -f plugdev
@@ -58,213 +92,182 @@ sudo usermod -aG plugdev "$(id -un)"
 sudo udevadm control --reload-rules
 ```
 
-その後、**ログアウトしてログインし直し**（SSHなら再接続）、RTL-SDRをUSBから抜き差しします。
-`id -nG` に `plugdev` が含まれることを確認し、`sudo` を付けずに接続を確認します。
+Then **log out and back in** (reconnect if you are on SSH) and unplug/replug the
+RTL-SDR. Confirm that `id -nG` lists `plugdev`, and check the connection without
+`sudo`:
 
 ```sh
 id -nG
 rtl_test -s 2048000
-# サンプルの読み取りを確認したらCtrl+Cで終了
+# After confirming samples are read, stop with Ctrl+C
 recrtl --list-devices
 ```
 
-`rtl_test` を終了してから `recrtl` を起動してください。同じ受信機を同時には使えません。
-`recrtl --list-devices` は列挙だけなので、実際に開けるかどうかは `rtl_test` で確認します。
+Stop `rtl_test` before starting `recrtl`; a receiver cannot be shared.
+`recrtl --list-devices` only enumerates devices, so use `rtl_test` to confirm
+that a device can actually be opened.
 
-権限エラーが続く場合は、`/usr/lib/udev/rules.d/` または `/lib/udev/rules.d/` の
-`60-librtlsdr*.rules` に受信機のUSB IDが含まれているか確認してください。
+If permission errors persist, check that
+`60-librtlsdr*.rules` under `/usr/lib/udev/rules.d/` or `/lib/udev/rules.d/`
+contains the USB ID of your receiver.
 
-`Kernel driver is active` などで開けない場合は、他の受信ソフトを終了し、
-DVB用カーネルドライバーとの競合を確認します。競合している場合のみ、次の設定を追加して再起動します。
-この設定は同じドライバーを使う機器のDVB受信にも影響します。
+If the device cannot be opened with `Kernel driver is active`, close any other
+receiver software and check for a conflict with the DVB kernel driver. Only if
+there is a conflict, add the following and reboot. This setting also affects DVB
+reception by other devices that use the same driver.
 
 ```sh
 echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/recrtl-rtl-sdr.conf
 sudo reboot
 ```
 
-## 録画
+## Quickstart
 
 ```sh
-recrtl [OPTIONS] CHANNEL RECTIME DESTFILE
-
-# 物理19chを60秒間録画
+# Record physical channel 19 for 60 seconds
 recrtl --dev 0 --gain 38.6 19 60 recording.ts
 
-# 終了シグナルまで録画し、TSを標準出力へ送る
+# Record until stopped and stream the TS to stdout
 recrtl 19 - - > recording.ts
 
-# SIDを選択
-recrtl --sid 32152 19 1h30m recording.ts
-
-# 標準出力を再生ソフトへ渡す
+# Pipe the live stream into a player
 recrtl 19 - - | ffplay -i pipe:0
 ```
 
-- `CHANNEL`: UHF物理チャンネル13〜62。BS/CSやフルセグは受信しません。
-- `RECTIME`: 秒数、`H:M`、`H:M:S`、`1h30m`、`1h2m3s`、または無期限の `-`。
-  recdvbと同じく `1:30` は1時間30分です。実機では受信開始からの経過時間で終了します。
-- `DESTFILE`: 新規ファイル、または標準出力の `-`。既存ファイルへの上書きはエラーにします。
-- `--dev N` / `-d N`: RTL-SDRのデバイス番号（既定値0）。
-- `--sid LIST` / `-i LIST`: SIDのカンマ区切り、`all`（既定値）、`hd` / `sd1`、`sd2`、`sd3`、
-  `1seg`、`epg`、`epg1seg`。数値と別名の混在も可能です。
-  `1seg` はPMT PID `0x1fc8` の番組を選択します。存在しないSIDではTSを出力せず、
-  有期限録画・ファイル終端でエラーにします。
-- `--strip` / `-s`: nullパケットを除外。
-- `--compatible CLIENT`: クライアント固有の互換処理を有効にします。現在は `konomitv` のみを
-  指定できます。映像・音声はワンセグのまま、MirakurunにフルセグのデジタルTVサービスとして
-  認識させます。SDTのサービス記述子の `service_type` を `0x01`（デジタルTV）に書き換えて
-  CRCを再計算するため、Mirakurunの `/api/services` の `type` が `0xC0` ではなく `1` になります。
-  サービスID（SID）は変更しません。あわせて、ワンセグのL-EITに無い音声コンポーネント記述子
-  （`0xC4`）を各イベントに補い、Mirakurunの番組情報に `audios` を出します（AACステレオ・
-  48 kHz・日本語の固定値）。これは音声情報の欠落を前提とするKonomiTVが番組情報を取り込めない
-  問題を避けるためです。
-- `--help` / `-h`、`--version` / `-v`、`--list` / `-l`: ヘルプ、バージョン、物理チャンネル一覧。
+## Usage
 
-TS以外の診断はstderrへ出力します。SIGINT / SIGTERMで停止でき、出力先のパイプが
-詰まっていても停止できます。パイプの読み手が終了した場合は正常終了します。
-実機受信では、プレーヤーが読み取りを一時停止してもIQの受信・復号を続けるよう、
-未送信のTSを最大4 MiB保持します。読み取りが再開すれば順番どおり送信し、
-上限に達した場合は `TS output stalled` として終了します。保存IQの再生は読み手の速度に合わせます。
-B25、LNB制御、HTTP/UDP配信のオプションは対応範囲外で、指定するとエラーになります。
-
-## Mirakurunで使う場合
-
-RTL-SDRを1台使う場合の `tuners.yml` の記述例です。
-設定ファイルの場所は[Mirakurunの設定ドキュメント](https://github.com/Chinachu/Mirakurun/blob/master/doc/Configuration.ja.md)を参照してください。
-
-```yaml
-- name: RTL-SDR-0
-  types:
-    - GR
-  command: recrtl --dev 0 <channel> - -
-  isDisabled: false
+```text
+recrtl [OPTIONS] CHANNEL RECTIME DESTFILE
 ```
 
-`<channel>` はMirakurunが `channels.yml` の物理チャンネル番号に置き換えます。
-末尾の `- -` は無期限の受信とTSの標準出力を指定します。受信対象は地上波のワンセグのみです。
-ゲインを固定する場合は、`--dev 0` の後ろに `--gain 38.6` などを追加します。
+### Arguments
 
-ワンセグのサービスをフルセグのデジタルTVサービスとしてMirakurunに登録したい場合は、
-`command` に `--compatible konomitv` を追加します。
+- `CHANNEL`: UHF physical channel, 13..62. BS/CS and full-segment are not
+  received.
+- `RECTIME`: seconds, `H:M`, `H:M:S`, `1h30m`, `1h2m3s`, or `-` for unlimited.
+  As in recdvb, `1:30` means 1 hour 30 minutes. With a live device the timer
+  starts when reception begins.
+- `DESTFILE`: a new file, or `-` for stdout. Overwriting an existing file is an
+  error.
 
-```yaml
-  command: recrtl --dev 0 --compatible konomitv <channel> - -
-```
+### Options
 
-`--compatible konomitv` はSDTの `service_type` とEITの音声記述子だけを補うため、映像・音声は
-ワンセグのままです（解像度はMirakurun上では `240p` のままです）。
-MirakurunはPATに含まれるサービスだけをSDTから登録するため、`--compatible konomitv` を付けても
-SIDは変わりません。
+- `--dev N` / `-d N`: RTL-SDR device index (default `0`).
+- `--sid LIST` / `-i LIST`: comma-separated service IDs, `all` (default), `hd` /
+  `sd1`, `sd2`, `sd3`, `1seg`, `epg`, `epg1seg`. Numeric IDs and aliases can be
+  mixed. `1seg` selects the program whose PMT PID is `0x1fc8`. If none of the
+  requested SIDs exist, no TS is emitted and a timed or file-ended recording
+  fails.
+- `--strip` / `-s`: remove null packets.
+- `--compatible CLIENT`: enable client-specific compatibility workarounds.
+  Currently only `konomitv` is accepted. The video and audio stay one-segment,
+  but the service is presented to Mirakurun as a full-segment digital TV
+  service. The `service_type` in the SDT service descriptor is rewritten to
+  `0x01` (digital TV) and the CRC is recomputed, so Mirakurun's
+  `/api/services` reports `type` as `1` instead of `0xC0`. The service ID (SID)
+  is not changed. In addition, the audio component descriptor (`0xC4`) that the
+  one-seg L-EIT lacks is added to every event, so Mirakurun exposes `audios` in
+  its program information (fixed AAC stereo, 48 kHz, Japanese). This avoids the
+  problem where KonomiTV cannot ingest program information that lacks audio
+  metadata.
+- `--help` / `-h`, `--version` / `-v`, `--list` / `-l`: help, version, and the
+  physical channel list.
 
-Mirakurunはサービス情報を `SERVICES_DB_PATH`（既定では `var/db/services.json`）に保存し、
-既存サービスの `type` は毎日6:05の `Service.Updater` まで更新しません。
-`--compatible konomitv` を付けずに登録済みのサービスがあると `type` は `192` のまま残るため、
-次のいずれかでサービスを登録し直してください。
+### Diagnostics and receiver options
 
-- Mirakurunを停止して `SERVICES_DB_PATH` を削除してから再起動する（再スキャンされます）。
-- 毎日6:05の `Service.Updater` を待つ。
+- `--list-devices`: list attached RTL-SDR receivers.
+- `--list-regions`: list the prefecture codes in the bundled station database.
+- `--list-channels PREFECTURE`: list the stations preserved for a prefecture.
+- `--iq-file PATH`: decode a saved unsigned 8-bit interleaved IQ file at
+  2.048 MS/s (no hardware needed).
+- `--trim`: for IQ files only, drop incomplete H.264/AAC frames and the video
+  before the first SPS/PPS/IDR. Buffers the whole TS until EOF; no re-encoding.
+- `--gain DB`: fixed tuner gain (automatic when omitted).
+- `--frequency MHz`: override the center frequency.
+- `--ppm N`: tuner frequency correction.
+- `--verbose`: print receiver statistics on stderr.
 
-`--compatible konomitv` を追加した状態でサービスDBを作り直すと、`/api/services` の `type` は
-`1` になります。
-チャンネルスキャンの `refresh=true` は `channels.yml` を更新するだけで、サービスDBの `type` は
-更新しないため注意してください。
+### Output and exit behavior
 
-EITの音声記述子も、既存の番組情報には反映されません。`--compatible konomitv` を付けた状態で
-Mirakurunの番組情報を取り直すには、Mirakurunを停止して `PROGRAMS_DB_PATH`
-（既定では `var/db/programs.json`）を削除してから再起動し、EPG取得をやり直してください。
-KonomiTVなどのクライアントは、Mirakurunの全番組に `audios` が付いた後に番組情報を
-取り込めるようになります。
+Diagnostics other than TS are written to stderr. The recorder can be stopped
+with SIGINT or SIGTERM, even if the output pipe is blocked. If the reader of the
+pipe exits, recrtl exits successfully.
 
-Mirakurunの実行ユーザーから `recrtl` を起動できるようにしてください。
-PATHに含まれない場合は、`command` の `recrtl` を実際の実行ファイルの絶対パスに置き換えます。
-同じ実行ユーザーにUSBデバイスへのアクセス権も必要です。
-Dockerで動かす場合は、コンテナ内に `recrtl` と `librtlsdr` を用意し、USBデバイスを渡してください。
+During live reception, up to 4 MiB of unsent TS is buffered so that IQ reception
+and decoding continue even if the player pauses reading. When reading resumes,
+the buffered TS is sent in order. If the limit is reached, recrtl exits with
+`TS output stalled`. Saved-IQ playback follows the reader's pace.
 
-この設定でMirakurunの地上波チャンネルスキャンとワンセグのEPG取得を行えます。
-`--sid` は省略（既定の `all`）し、Mirakurun側でサービスを選択してください。
-`--sid epg` はワンセグ用EITを選択しないため、チューナーの起動コマンドには指定しません。
-Mirakurunの `disableEITParsing` は `false`（既定値）にします。
-スキャンではワンセグのサービスID・局名が登録されます。既存のフルセグ用サービスIDを
-`channels.yml` に指定している場合は、ワンセグ用に設定し直してください。
+B25, LNB control, and HTTP/UDP streaming options are out of scope; specifying
+them results in an error.
 
-スキャンに必要なPATは、SDTから取得した放送のTS IDとNIT PIDへの参照を含めて生成します。
-ワンセグ用EIT（PID `0x27`）はそのまま残し、Mirakurunが解析するPID `0x12` にも出力します。
-元からPID `0x12` のEITがある場合も、セクション単位でまとめて連続性カウンターを付け直します。
-対応先の処理は[MirakurunのTSFilter](https://github.com/Chinachu/Mirakurun/blob/master/src/Mirakurun/TSFilter.ts)を参照してください。
-
-取得できる番組情報は、ワンセグで放送され、Mirakurunが解析できる範囲に限られます。
-確認済みの6局では現在・次の番組を取得できますが、フルセグ相当の数日分の番組表は保証しません。
-ワンセグに含まれない番組情報を補完・生成する機能はありません。
-
-## 受信確認用オプション
+### Service selection
 
 ```sh
-recrtl --list-devices
-recrtl --list-regions
-recrtl --list-channels niigata
+# Select a SID
+recrtl --sid 32152 19 1h30m recording.ts
 
-# 2.048 MS/s unsigned 8-bit I,Q交互の保存データを復号
+# Mix a SID and the one-seg EPG
+recrtl --sid 32152,epg1seg 19 - - > recording.ts
+```
+
+### IQ replay and verification
+
+```sh
+# Decode a saved 2.048 MS/s unsigned 8-bit interleaved I,Q capture
 recrtl --iq-file capture.u8iq 19 - recording.ts
 
-# 有限IQの記録端を整形して、映像・音声の厳密な検証に使う
+# Trim a finite IQ recording for strict video/audio verification
 recrtl --iq-file capture.u8iq --trim 19 - trimmed.ts
 ffmpeg -v error -xerror -i trimmed.ts -map 0:v:0 -map 0:a:0 -f null -
 ```
 
-`--gain DB` は固定ゲイン（省略時は自動）、`--frequency MHz` は中心周波数、
-`--ppm N` はチューナーの周波数補正です。
-保存IQでは `RECTIME` は入力サンプル数に換算され、実時間での待機はしません。
-`-` はファイル終端まで処理します。通常は5〜10秒以上のIQを用意してください。
+With a saved IQ file, `RECTIME` is converted into a number of input samples and
+no real-time waiting occurs. `-` processes until the end of the file. In
+practice, prepare at least 5 to 10 seconds of IQ data.
 
-`--trim` は保存IQ専用で、全TSをメモリに保持してから不完全なPES・AACフレームと
-最初のSPS/PPS/IDR以前の映像を除外します。再エンコードはしません。
-通常の録画はTSを逐次出力するため、記録端の不完全フレームを含み得ます。
+## Integration
 
-## 受信方式
+recrtl can be used as a tuner command behind a Mirakurun-compatible server, and
+its one-seg output can be adapted for KonomiTV. See the integration guides:
 
-現在の対応範囲はMode 3、GI 1/8、部分受信Layer A、QPSK、1セグメントです。
-TMCCから符号化率1/2・2/3・3/4・5/6・7/8と時間インターリーブ長0・1・2・4を選びます。
-他のモード・GI・変調方式は未対応です。
+- [Mirakurun](docs/mirakurun.md)
+- [mirakc](docs/mirakc.md)
+- [KonomiTV](docs/konomitv.md)
 
-処理経路は以下の通りです。
+## Development
 
-```text
-RTL-SDR / IQ file (2.048 MS/s u8 IQ)
- → 125/252 FIR resampling
- → CP synchronization / frequency and sampling-clock tracking
- → FFT / TMCC parity validation / scattered-pilot equalization
- → frequency and time deinterleaving / QPSK / bit deinterleaving
- → depuncturing / soft-decision Viterbi
- → byte deinterleaving / energy descrambling / RS(204,188)
- → PMT validation / PAT insertion / service filtering
- → 188-byte MPEG-TS
-```
-
-同期を失った場合は同期・FEC・番組情報をリセットして再取得します。
-無信号や復号失敗からダミーTSは生成しません。
-PATは部分受信PMTから生成し、transport_stream_idは実TSのSDTに合わせます（SDT取得前は暫定値1）。
-放送局一覧は旧実装のデータを `data/stations.json` に保存したもので、最新の割当を保証するものではありません。
-
-## テスト
+Run the standard checks:
 
 ```sh
 cargo test --locked
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
+```
 
-# 実IQを使う受け入れテスト（ffmpegとffprobeが必要）
+The regular tests run without a receiver, Python, or GNU Radio. The opt-in
+acceptance test uses a real IQ capture and requires `ffmpeg` and `ffprobe`:
+
+```sh
 RECRTL_TEST_IQ=/path/to/capture.u8iq \
   cargo test --release --test recorded -- --ignored --nocapture
 ```
 
-通常のテストは受信機・Python・GNU Radioなしで実行できます。
-Mirakurun向けには、PATのTS ID・NIT参照、EITのPID変換・分割セクションの結合・CRC、
-`--compatible konomitv` のSDT `service_type` 書き換えとCRC再計算を検証します。
-また、6局分の保存TSを使い、Mirakurun 4.1.3のTSFilter・EPG処理による局名・サービスID・
-現在／次の番組名・開始時刻・長さの取得をオフラインで確認しています。
-実IQテストはTS同期、H.264/AACのフレーム数、ffmpegによる厳密な復号を検証します。
-実機と実IQではMode 3・GI 1/8・QPSK・符号化率2/3・時間インターリーブ長4を検証しています。
-他の符号化率はViterbiの符号化・復号テストで確認しています。
+See [docs/architecture.md](docs/architecture.md) for what each test layer
+verifies and for the receiver internals.
 
-ライセンスはGPL-3.0-or-laterです。参照資料・帰属は `NOTICE` を参照してください。
+## Documentation
+
+The files under `docs/` are written in Japanese.
+
+- [docs/architecture.md](docs/architecture.md): supported modes, the DSP/FEC
+  pipeline, TS handling, Mirakurun compatibility, and the station database.
+- [docs/mirakurun.md](docs/mirakurun.md): using recrtl with Mirakurun.
+- [docs/mirakc.md](docs/mirakc.md): using recrtl with mirakc.
+- [docs/konomitv.md](docs/konomitv.md): using recrtl with KonomiTV.
+- [README.ja.md](README.ja.md): Japanese README.
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for reference
+material and attribution.
