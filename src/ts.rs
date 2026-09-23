@@ -97,9 +97,10 @@ impl Sections {
         }
     }
 }
-/// Rewrite every service descriptor in an SDT section to the digital TV
-/// service_type (0x01) and refresh the CRC. Other sections pass through.
-fn fullseg_sdt(section: &[u8]) -> Vec<u8> {
+/// KonomiTV compatibility: rewrite every service descriptor in an SDT section
+/// to the digital TV service_type (0x01) and refresh the CRC. Other sections
+/// pass through.
+fn konomitv_sdt(section: &[u8]) -> Vec<u8> {
     let mut s = section.to_vec();
     if s.len() < 15 || s[0] != 0x42 {
         return s;
@@ -135,7 +136,7 @@ fn fullseg_sdt(section: &[u8]) -> Vec<u8> {
 /// and clients such as KonomiTV fail to parse the program. The descriptor is
 /// filled with fixed one-seg values (AAC stereo, 48 kHz, Japanese, main).
 /// Section length and CRC are refreshed. Other sections pass through.
-fn fullseg_eit(section: &[u8]) -> Vec<u8> {
+fn konomitv_eit(section: &[u8]) -> Vec<u8> {
     // EIT table_ids are 0x4E..=0x6F; anything else passes through.
     if section.len() < 18 || !(0x4e..=0x6f).contains(&section[0]) {
         return section.to_vec();
@@ -289,11 +290,11 @@ pub struct Transport {
     eit_counter: u8,
     sdt_counter: u8,
     strip: bool,
-    fullseg: bool,
+    konomitv: bool,
     pub written: u64,
 }
 impl Transport {
-    pub fn new(selection: Selection, strip: bool, fullseg: bool) -> Self {
+    pub fn new(selection: Selection, strip: bool, konomitv: bool) -> Self {
         Self {
             sections: Sections::default(),
             programs: BTreeMap::new(),
@@ -305,7 +306,7 @@ impl Transport {
             eit_counter: 0,
             sdt_counter: 0,
             strip,
-            fullseg,
+            konomitv,
             written: 0,
         }
     }
@@ -326,7 +327,7 @@ impl Transport {
                         self.count = 0;
                     }
                 }
-                if self.fullseg {
+                if self.konomitv {
                     sdt.push(s);
                 }
             }
@@ -402,11 +403,16 @@ impl Transport {
             out.push(pat);
         }
         self.count += 1;
-        if id == 0x11 && self.fullseg {
+        if id == 0x11 && self.konomitv {
             // Rewrite the service_type of each SDT service to digital TV so
             // Mirakurun reports the one-seg service as full-seg (type=0x01).
             for section in &sdt {
-                emit_section(&fullseg_sdt(section), 0x11, &mut self.sdt_counter, &mut out);
+                emit_section(
+                    &konomitv_sdt(section),
+                    0x11,
+                    &mut self.sdt_counter,
+                    &mut out,
+                );
             }
         } else if id != 0x12 {
             out.push(p);
@@ -418,8 +424,8 @@ impl Transport {
             for s in self.sections.feed(&p) {
                 // Fill in the audio metadata the one-seg L-EIT omits so
                 // Mirakurun reports `audios` for the mirrored program.
-                let s = if id == 0x27 && self.fullseg {
-                    fullseg_eit(&s)
+                let s = if id == 0x27 && self.konomitv {
+                    konomitv_eit(&s)
                 } else {
                     s
                 };
@@ -704,7 +710,7 @@ mod tests {
     }
 
     #[test]
-    fn fullseg_rewrites_sdt_service_type_to_digital_tv() {
+    fn konomitv_rewrites_sdt_service_type_to_digital_tv() {
         // SDT with one service (SID 0x7d98) whose service_type is data (0xC0).
         let sdt = vec![
             0x42, 0, 0, 0x7e, 0x03, 0xc1, 0, 0, 0x7e, 0x03, 0xff, 0x7d, 0x98, 0xf3, 0x00, 0x07,
@@ -729,11 +735,14 @@ mod tests {
             .feed(out.iter().find(|p| pid(*p) == 0x11).unwrap())
             .pop()
             .unwrap();
-        assert_eq!(section[18], 0xc0, "unmodified without --fullseg");
+        assert_eq!(
+            section[18], 0xc0,
+            "unmodified without --compatible konomitv"
+        );
     }
 
     #[test]
-    fn fullseg_fills_missing_eit_audio_descriptor() {
+    fn konomitv_fills_missing_eit_audio_descriptor() {
         // EIT[p/f] for SID 0x7d98 with one event carrying only a short event
         // descriptor and a content descriptor, like a one-seg L-EIT.
         let eit = vec![
@@ -750,7 +759,10 @@ mod tests {
             .feed(out.iter().find(|p| pid(*p) == 0x12).unwrap())
             .pop()
             .unwrap();
-        assert!(!section.contains(&0xc4), "unmodified without --fullseg");
+        assert!(
+            !section.contains(&0xc4),
+            "unmodified without --compatible konomitv"
+        );
 
         let mut t = Transport::new(Selection::All, false, true);
         t.feed(pmt);
@@ -769,7 +781,9 @@ mod tests {
             .expect("synthesized audio component descriptor");
         assert_eq!(
             audio,
-            &[0xc4, 0x09, 0xf2, 0x03, 0x01, 0x0f, 0xff, 0x4f, 0x6a, 0x70, 0x6e][..]
+            &[
+                0xc4, 0x09, 0xf2, 0x03, 0x01, 0x0f, 0xff, 0x4f, 0x6a, 0x70, 0x6e
+            ][..]
         );
     }
 }

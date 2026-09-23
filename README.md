@@ -111,13 +111,14 @@ recrtl 19 - - | ffplay -i pipe:0
   `1seg` はPMT PID `0x1fc8` の番組を選択します。存在しないSIDではTSを出力せず、
   有期限録画・ファイル終端でエラーにします。
 - `--strip` / `-s`: nullパケットを除外。
-- `--fullseg`: 映像・音声はワンセグのまま、MirakurunにフルセグのデジタルTVサービスとして
+- `--compatible CLIENT`: クライアント固有の互換処理を有効にします。現在は `konomitv` のみを
+  指定できます。映像・音声はワンセグのまま、MirakurunにフルセグのデジタルTVサービスとして
   認識させます。SDTのサービス記述子の `service_type` を `0x01`（デジタルTV）に書き換えて
   CRCを再計算するため、Mirakurunの `/api/services` の `type` が `0xC0` ではなく `1` になります。
   サービスID（SID）は変更しません。あわせて、ワンセグのL-EITに無い音声コンポーネント記述子
   （`0xC4`）を各イベントに補い、Mirakurunの番組情報に `audios` を出します（AACステレオ・
-  48 kHz・日本語の固定値）。これは音声情報の欠落を前提とするクライアント（KonomiTVなど）が
-  番組情報を取り込めない問題を避けるためです。
+  48 kHz・日本語の固定値）。これは音声情報の欠落を前提とするKonomiTVが番組情報を取り込めない
+  問題を避けるためです。
 - `--help` / `-h`、`--version` / `-v`、`--list` / `-l`: ヘルプ、バージョン、物理チャンネル一覧。
 
 TS以外の診断はstderrへ出力します。SIGINT / SIGTERMで停止でき、出力先のパイプが
@@ -145,29 +146,31 @@ RTL-SDRを1台使う場合の `tuners.yml` の記述例です。
 ゲインを固定する場合は、`--dev 0` の後ろに `--gain 38.6` などを追加します。
 
 ワンセグのサービスをフルセグのデジタルTVサービスとしてMirakurunに登録したい場合は、
-`command` に `--fullseg` を追加します。
+`command` に `--compatible konomitv` を追加します。
 
 ```yaml
-  command: recrtl --dev 0 --fullseg <channel> - -
+  command: recrtl --dev 0 --compatible konomitv <channel> - -
 ```
 
-`--fullseg` はSDTの `service_type` とEITの音声記述子だけを補うため、映像・音声はワンセグのままです
-（解像度はMirakurun上では `240p` のままです）。
-MirakurunはPATに含まれるサービスだけをSDTから登録するため、`--fullseg` を付けてもSIDは変わりません。
+`--compatible konomitv` はSDTの `service_type` とEITの音声記述子だけを補うため、映像・音声は
+ワンセグのままです（解像度はMirakurun上では `240p` のままです）。
+MirakurunはPATに含まれるサービスだけをSDTから登録するため、`--compatible konomitv` を付けても
+SIDは変わりません。
 
 Mirakurunはサービス情報を `SERVICES_DB_PATH`（既定では `var/db/services.json`）に保存し、
 既存サービスの `type` は毎日6:05の `Service.Updater` まで更新しません。
-`--fullseg` を付けずに登録済みのサービスがあると `type` は `192` のまま残るため、
+`--compatible konomitv` を付けずに登録済みのサービスがあると `type` は `192` のまま残るため、
 次のいずれかでサービスを登録し直してください。
 
 - Mirakurunを停止して `SERVICES_DB_PATH` を削除してから再起動する（再スキャンされます）。
 - 毎日6:05の `Service.Updater` を待つ。
 
-`--fullseg` を追加した状態でサービスDBを作り直すと、`/api/services` の `type` は `1` になります。
+`--compatible konomitv` を追加した状態でサービスDBを作り直すと、`/api/services` の `type` は
+`1` になります。
 チャンネルスキャンの `refresh=true` は `channels.yml` を更新するだけで、サービスDBの `type` は
 更新しないため注意してください。
 
-EITの音声記述子も、既存の番組情報には反映されません。`--fullseg` を付けた状態で
+EITの音声記述子も、既存の番組情報には反映されません。`--compatible konomitv` を付けた状態で
 Mirakurunの番組情報を取り直すには、Mirakurunを停止して `PROGRAMS_DB_PATH`
 （既定では `var/db/programs.json`）を削除してから再起動し、EPG取得をやり直してください。
 KonomiTVなどのクライアントは、Mirakurunの全番組に `audios` が付いた後に番組情報を
@@ -257,7 +260,7 @@ RECRTL_TEST_IQ=/path/to/capture.u8iq \
 
 通常のテストは受信機・Python・GNU Radioなしで実行できます。
 Mirakurun向けには、PATのTS ID・NIT参照、EITのPID変換・分割セクションの結合・CRC、
-`--fullseg` のSDT `service_type` 書き換えとCRC再計算を検証します。
+`--compatible konomitv` のSDT `service_type` 書き換えとCRC再計算を検証します。
 また、6局分の保存TSを使い、Mirakurun 4.1.3のTSFilter・EPG処理による局名・サービスID・
 現在／次の番組名・開始時刻・長さの取得をオフラインで確認しています。
 実IQテストはTS同期、H.264/AACのフレーム数、ffmpegによる厳密な復号を検証します。

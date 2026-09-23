@@ -1,6 +1,12 @@
 use anyhow::{Result, bail, ensure};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
+
+#[derive(ValueEnum, Clone, Copy, Debug)]
+pub enum Compatible {
+    /// Report the one-seg service as full-seg and fill in audio metadata
+    Konomitv,
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -54,10 +60,9 @@ pub struct Args {
     /// Remove null TS packets
     #[arg(long, short = 's')]
     pub strip: bool,
-    /// Report the one-seg service to Mirakurun as a full-seg digital TV service
-    /// (rewrites the SDT service_type to 0x01; the stream stays one-seg)
-    #[arg(long)]
-    pub fullseg: bool,
+    /// Apply client compatibility workarounds (the stream stays one-seg)
+    #[arg(long, value_name = "CLIENT")]
+    pub compatible: Option<Compatible>,
     /// Print receiver statistics on stderr
     #[arg(long)]
     pub verbose: bool,
@@ -116,6 +121,9 @@ pub fn duration(s: &str) -> Result<Option<f64>> {
 }
 
 impl Args {
+    pub fn konomitv(&self) -> bool {
+        matches!(self.compatible, Some(Compatible::Konomitv))
+    }
     pub fn validate(&self) -> Result<(u32, Option<f64>)> {
         ensure!(
             !self.trim || self.iq_file.is_some(),
